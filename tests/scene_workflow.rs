@@ -4,6 +4,39 @@ use math_playground::{
 };
 
 #[test]
+fn function_equations_mesh_and_preserve_scene_on_invalid_calls() {
+    let mut scene = Scene::default();
+    for request in [
+        "plot ln(x)=y",
+        "plot sin(x)=z",
+        "plot cos(x)=y",
+        "plot tan(x)=z",
+        "plot ln(cos(x)+2)=y",
+    ] {
+        scene.request(request).unwrap();
+        assert!(!scene.geometry.lines.is_empty(), "{request}");
+        assert!(
+            scene
+                .geometry
+                .lines
+                .iter()
+                .flatten()
+                .flatten()
+                .all(|v| v.is_finite())
+        );
+        if request == "plot ln(x)=y" {
+            assert!(scene.geometry.skipped_tetrahedra > 0);
+            assert!(scene.geometry.lines.iter().flatten().all(|p| p[0] > 0.0));
+        }
+    }
+    let before = scene.geometry.lines.clone();
+    assert!(scene.request("plot sin(x,y)").is_err());
+    assert_eq!(scene.geometry.lines, before);
+    scene.request("create a helix with five turns").unwrap();
+    assert!(scene.surface.is_none());
+}
+
+#[test]
 fn surfaces_sampling_and_helix_switching_preserve_valid_state() {
     use math_playground::geometry::Sampling;
     let mut scene = Scene::default();

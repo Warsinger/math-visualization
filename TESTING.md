@@ -38,3 +38,9 @@ Manual extension checklist:
 7. Inspect default/minimum size with the example expander open. Check long equation text, error feedback, and sampling/camera controls are readable.
 
 Automated checks are recorded in README. Native startup is a smoke check only; interactive manual review and image comparison remain outstanding.
+
+## Function checks
+
+Automated tests verify ln at e, sine/cosine/tangent at known radian angles, nested calls and power/unary precedence, required parentheses/one argument, unknown names, retained parser limits, log at positive/zero/negative inputs, overflow and invalid intermediates, and the tangent near-pole guard plus signs on either side. Scene tests mesh all four functions and a nested expression, verify finite geometry and skipped logarithm-domain regions, preserve geometry on malformed calls, and return to a helix.
+
+Manual review: try `plot ln(x)=y`, `plot sin(x)=z`, `plot cos(x)=y`, `plot tan(x)=z`, and `plot ln(cos(x)+2)=y`. These are 3D surfaces extended along the unused coordinate, not 2D plots. Check log-domain feedback, rotate the surfaces, and narrow X to ±1 for a tangent branch without poles. With X at ±3, pole-crossing artifacts can occur despite near-pole sample exclusion. Check malformed `plot sin(x,y)` preserves the preceding scene and the new function examples remain readable. Pixel/interaction review remains pending.

@@ -5,16 +5,25 @@ enum Expr {
     Variable(usize),
     Neg(Box<Expr>),
     Binary(char, Box<Expr>, Box<Expr>),
+    Function(Function, Box<Expr>),
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Function {
+    Ln,
+    Sin,
+    Cos,
+    Tan,
 }
 
 impl Expr {
-    fn eval(&self, p: [f64; 3]) -> f64 {
-        match self {
+    fn eval(&self, p: [f64; 3]) -> Option<f64> {
+        let value = match self {
             Self::Number(v) => *v,
             Self::Variable(i) => p[*i],
-            Self::Neg(a) => -a.eval(p),
+            Self::Neg(a) => -a.eval(p)?,
             Self::Binary(op, a, b) => {
-                let (a, b) = (a.eval(p), b.eval(p));
+                let (a, b) = (a.eval(p)?, b.eval(p)?);
                 match op {
                     '+' => a + b,
                     '-' => a - b,
@@ -24,12 +33,25 @@ impl Expr {
                     _ => unreachable!(),
                 }
             }
-        }
+            Self::Function(function, argument) => {
+                let value = argument.eval(p)?;
+                match function {
+                    Function::Ln if value > 0.0 => value.ln(),
+                    Function::Ln => return None,
+                    Function::Sin => value.sin(),
+                    Function::Cos => value.cos(),
+                    // Exclude near-pole samples; grid edges can still span a pole.
+                    Function::Tan if value.cos().abs() > 1e-12 => value.tan(),
+                    Function::Tan => return None,
+                }
+            }
+        };
+        value.is_finite().then_some(value)
     }
     fn has_variable(&self) -> bool {
         match self {
             Self::Variable(_) => true,
-            Self::Neg(a) => a.has_variable(),
+            Self::Neg(a) | Self::Function(_, a) => a.has_variable(),
             Self::Binary(_, a, b) => a.has_variable() || b.has_variable(),
             _ => false,
         }
@@ -69,8 +91,10 @@ impl Equation {
     }
     /// Undefined or non-real arithmetic is excluded from sampling.
     pub fn evaluate(&self, point: [f64; 3]) -> Option<f64> {
-        let value = self.root.eval(point);
-        value.is_finite().then_some(value)
+        if point.iter().any(|v| !v.is_finite()) {
+            return None;
+        }
+        self.root.eval(point)
     }
 }
 
@@ -113,10 +137,42 @@ impl Parser<'_> {
                 self.pos += 1;
                 value
             }
-            Some(b'x' | b'y' | b'z') => {
-                let i = (self.peek().unwrap() - b'x') as usize;
-                self.pos += 1;
-                Expr::Variable(i)
+            Some(c) if c.is_ascii_alphabetic() => {
+                let start = self.pos;
+                while self.peek().is_some_and(|c| c.is_ascii_alphabetic()) {
+                    self.pos += 1;
+                }
+                let name = std::str::from_utf8(&self.text[start..self.pos]).unwrap();
+                match name {
+                    "x" => Expr::Variable(0),
+                    "y" => Expr::Variable(1),
+                    "z" => Expr::Variable(2),
+                    "ln" | "sin" | "cos" | "tan" => {
+                        let function = match name {
+                            "ln" => Function::Ln,
+                            "sin" => Function::Sin,
+                            "cos" => Function::Cos,
+                            _ => Function::Tan,
+                        };
+                        self.space();
+                        if self.peek() != Some(b'(') {
+                            return Err(format!("Use {name}(expression)."));
+                        }
+                        self.pos += 1;
+                        let argument = self.expr(0, depth + 1)?;
+                        self.space();
+                        if self.peek() != Some(b')') {
+                            return Err(format!("Expected ')' after {name} argument."));
+                        }
+                        self.pos += 1;
+                        Expr::Function(function, Box::new(argument))
+                    }
+                    _ => {
+                        return Err(format!(
+                            "Unknown name '{name}'. Use x/y/z or ln/sin/cos/tan."
+                        ));
+                    }
+                }
             }
             Some(c) if c.is_ascii_digit() || c == b'.' => {
                 let start = self.pos;
@@ -172,6 +228,71 @@ impl Parser<'_> {
 mod tests {
     use super::*;
     #[test]
+    fn functions_radians_nested_calls_and_precedence() {
+        let eval = |s, x| Equation::parse(s).unwrap().evaluate([x, 0.0, 0.0]).unwrap();
+        assert!((eval("ln(x)", std::f64::consts::E) - 1.0).abs() < 1e-12);
+        assert!((eval("sin(x)", std::f64::consts::FRAC_PI_2) - 1.0).abs() < 1e-12);
+        assert!((eval("cos(x)", std::f64::consts::PI) + 1.0).abs() < 1e-12);
+        assert!((eval("tan(x)", std::f64::consts::FRAC_PI_4) - 1.0).abs() < 1e-12);
+        assert_eq!(eval("ln(cos(x)+1)", 0.0), 2.0_f64.ln());
+        assert_eq!(eval("-sin(x)^2", 0.5), -(0.5_f64.sin().powi(2)));
+        assert!((eval("sin(-x^2)", 0.5) - (-0.25_f64).sin()).abs() < 1e-12);
+        assert!((eval("sin (x+1)^2^3", 0.5) - 1.5_f64.sin().powi(8)).abs() < 1e-12);
+    }
+    #[test]
+    fn function_syntax_and_resource_limits_remain_strict() {
+        for s in [
+            "sin x", "sin()", "sin(x,y)", "sinh(x)", "sin(x", "sin(x))", "sinx", "SIN(x)", "ln(1)",
+            "2sin(x)",
+        ] {
+            assert!(Equation::parse(s).is_err(), "{s}");
+        }
+        let deep = format!("{}{}x{}", "sin(".repeat(20), "(".repeat(50), ")".repeat(70));
+        assert!(deep.len() <= 256);
+        assert!(Equation::parse(&deep).is_err());
+    }
+    #[test]
+    fn invalid_domains_and_intermediates_cannot_be_masked() {
+        for s in ["ln(x)", "ln(x)^0", "cos(ln(x))", "(1/x)^0"] {
+            assert_eq!(Equation::parse(s).unwrap().evaluate([0.0; 3]), None, "{s}");
+        }
+        assert_eq!(
+            Equation::parse("ln(x)").unwrap().evaluate([-1.0, 0.0, 0.0]),
+            None
+        );
+        assert!(
+            Equation::parse("ln(x)")
+                .unwrap()
+                .evaluate([1e-300, 0.0, 0.0])
+                .unwrap()
+                .is_finite()
+        );
+        let tan = Equation::parse("tan(x)").unwrap();
+        assert_eq!(tan.evaluate([std::f64::consts::FRAC_PI_2, 0.0, 0.0]), None);
+        assert!(
+            tan.evaluate([std::f64::consts::FRAC_PI_2 - 1e-5, 0.0, 0.0])
+                .unwrap()
+                > 0.0
+        );
+        assert!(
+            tan.evaluate([std::f64::consts::FRAC_PI_2 + 1e-5, 0.0, 0.0])
+                .unwrap()
+                < 0.0
+        );
+        assert_eq!(
+            Equation::parse("sin(x)")
+                .unwrap()
+                .evaluate([f64::INFINITY, 0.0, 0.0]),
+            None
+        );
+        assert_eq!(
+            Equation::parse("sin(x*x)")
+                .unwrap()
+                .evaluate([1e300, 0.0, 0.0]),
+            None
+        );
+    }
+    #[test]
     fn precedence_equations_and_general_evaluation() {
         let eval = |s, p| Equation::parse(s).unwrap().evaluate(p).unwrap();
         assert_eq!(eval("-x^2 + 2^3^2", [3.0, 0.0, 0.0]), 503.0);
@@ -182,7 +303,7 @@ mod tests {
     #[test]
     fn rejects_unknown_code_and_malformed_input() {
         for s in [
-            "", "x=0=1", "2x", "sin(x)", "w+1", "x;exit()", "(x", "x+", "1e999*x", "0=0",
+            "", "x=0=1", "2x", "sqrt(x)", "w+1", "x;exit()", "(x", "x+", "1e999*x", "0=0",
         ] {
             assert!(Equation::parse(s).is_err(), "{s}");
         }

@@ -110,7 +110,8 @@ impl Playground {
             ui.collapsing("Request examples and equation syntax", |ui| {
                 ui.label("create a helix with five turns · set radius to 2 and height to 6");
                 ui.label("plot x^2 - y^2 - z^2 = 0 · plot x^2+y^2+z^2=4 · plot z-x*y");
-                ui.label("Use x/y/z, numbers, + - * / ^ and parentheses. Explicit multiplication; no functions.");
+                ui.label("plot ln(x)=y · plot sin(x)=z · plot cos(x)=y · plot tan(x)=z");
+                ui.label("Use x/y/z, numbers, + - * / ^, parentheses, ln/sin/cos/tan. Trig uses radians; multiplication is explicit.");
                 ui.label("Sampling can miss thin features, singularities and even roots; discontinuities can mislead.");
             });
             ui.separator();
