@@ -4,6 +4,12 @@ A Rust desktop explorer for helices and numerical implicit surfaces. End users e
 
 Track features for later work in [BACKLOG.md](BACKLOG.md).
 
+See the [UI guide with screenshots](docs/UI-GUIDE.md) for typed input, sampling controls, and camera basics.
+
+![App showing the default five-turn helix with typed input, selected-object controls, and a 3D canvas](docs/images/ui-default-five-turn-helix.png)
+
+Start with a five-turn helix, then explore equations and functions. The [illustrated guide](docs/UI-GUIDE.md) includes sphere and function-surface examples, plus sampling and camera instructions.
+
 ## Windows setup
 
 1. Install [official Rust via rustup](https://rust-lang.org/tools/install/) with the default stable MSVC toolchain. This project needs Rust 1.95 or newer. Rustup supplies Cargo; select the default profile for rustfmt and Clippy.
