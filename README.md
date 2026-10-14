@@ -2,7 +2,7 @@
 
 A Rust desktop explorer for helices and numerical implicit surfaces. End users edit through typed requests, sliders, and numeric inputs. Start with [SPEC.md](SPEC.md) for the project scope and learning roadmap, and [TESTING.md](TESTING.md) for regression checks.
 
-Track features for later work in [BACKLOG.md](BACKLOG.md).
+Track and discuss future features in [GitHub Issues](https://github.com/Warsinger/math-visualization/issues), the sole feature tracker.
 
 See the [UI guide with screenshots](docs/UI-GUIDE.md) for typed input, sampling controls, and camera basics.
 
@@ -49,7 +49,7 @@ Marching tetrahedra approximates real zero crossings on the finite sampled domai
 
 Rendering is an orthographic triangle-edge wireframe with no depth occlusion, lighting, or hidden-line removal. Surface calculation runs on one background worker, with editing disabled until it finishes; camera interaction remains available. Geometry is cached until an applied edit. Work is bounded to 68,921 grid evaluations, 384,000 tetrahedra and 120,000 output edges; complexity over the edge cap is rejected without replacing the prior scene. These are work limits, not a fixed elapsed-time guarantee on every computer. Repeated/shared triangle edges are currently retained.
 
-Formula typography remains pending in BACKLOG.md; equations currently appear as plain text.
+Formula typography remains pending in [issue #4](https://github.com/Warsinger/math-visualization/issues/4); equations currently appear as plain text.
 
 ## Review and verify
 
