@@ -1,5 +1,5 @@
 use eframe::egui::{self, Color32, Pos2, Stroke};
-use math_playground::scene::Helix;
+use math_playground::geometry::Geometry;
 
 pub struct Camera {
     pub yaw: f32,
@@ -27,7 +27,7 @@ impl Camera {
     }
 }
 
-pub fn canvas(ui: &mut egui::Ui, helix: Helix, camera: &mut Camera, height: f32) {
+pub fn canvas(ui: &mut egui::Ui, geometry: &Geometry, camera: &mut Camera, height: f32) {
     let (response, painter) = ui.allocate_painter(
         egui::vec2(ui.available_width().max(50.0), height),
         egui::Sense::drag(),
@@ -47,7 +47,7 @@ pub fn canvas(ui: &mut egui::Ui, helix: Helix, camera: &mut Camera, height: f32)
         camera.zoom = (camera.zoom * (scroll * 0.002).exp()).clamp(0.3, 4.0);
     }
     // Bounding sphere keeps the initial view in frame at every rotation.
-    let bound = helix.radius.hypot(helix.height / 2.0).max(1.0);
+    let bound = geometry.bound.max(0.1);
     let scale = rect.width().min(rect.height()) * 0.40 / bound * camera.zoom;
     let project = |point| camera.project(point, rect.center(), scale);
     for (end, label, color) in [
@@ -64,20 +64,18 @@ pub fn canvas(ui: &mut egui::Ui, helix: Helix, camera: &mut Camera, height: f32)
             color,
         );
     }
-    let points = helix.points();
-    for (i, pair) in points.windows(2).enumerate() {
-        let t = i as f32 / (points.len() - 1) as f32;
+    for (i, pair) in geometry.lines.iter().enumerate() {
+        let t = i as f32 / geometry.lines.len().max(1) as f32;
         let color = Color32::from_rgb((80.0 + 150.0 * t) as u8, (210.0 - 70.0 * t) as u8, 240);
         painter.line_segment(
             [project(pair[0]), project(pair[1])],
-            Stroke::new(2.5, color),
+            Stroke::new(1.2, color),
         );
     }
-    painter.circle_filled(project(points[0]), 4.0, Color32::WHITE);
     painter.text(
         rect.left_top() + egui::vec2(14.0, 14.0),
         egui::Align2::LEFT_TOP,
-        "HELIX · orthographic 3D view",
+        "Orthographic wireframe · no depth occlusion",
         egui::FontId::proportional(14.0),
         Color32::GRAY,
     );

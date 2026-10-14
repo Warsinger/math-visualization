@@ -17,8 +17,24 @@ Launch with `cargo run`; record Rust version, OS, graphics adapter, window size,
 5. Apply `set radius 3 and turns -1`; confirm a visible error and unchanged controls/curve. Try unsupported `animate helix`.
 6. Drag horizontally and vertically; scroll to zoom; confirm input outside the canvas does not rotate/zoom it. Reset view and inspect framing.
 7. Check fractional Turns 3.5, bounds on each slider, Enter submission, and the request-examples expander.
-8. Resize to 850×620. Confirm the field, controls, canvas, feedback, and formula remain usable.
+8. Resize to the current minimum 950×760. Confirm the field, controls, canvas, feedback, and formula remain usable.
 
 ## Next automation step
 
-Once the UI settles, extract widget construction into a testable UI function and use egui's test tooling to inject clicks, keyboard submission, and pointer motion. Capture a deterministic default-view image with fixed parameters and viewport. Add screenshot comparison with a small tolerance for fonts/antialiasing and preserve reference images for review. For a depth renderer, add camera/projection numeric tests and test image occlusion. These UI/image checks are planned, not claimed as executed by the initial scaffold.
+The widget construction now lives in a testable `draw` function with a headless drawing smoke test. Next, use egui's test tooling to inject clicks, keyboard submission, and pointer motion. Capture a deterministic default-view image with fixed parameters and viewport. Add screenshot comparison with a small tolerance for fonts/antialiasing and preserve reference images for review. For a depth renderer, add tests for image occlusion alongside existing camera/projection numeric tests. Input injection and image comparison are planned, not claimed as executed.
+
+## Equation regression tests and manual checks
+
+The equation extension adds parser precedence/right-associative powers, general evaluation, malformed/unknown syntax, byte/depth limits, non-real/nonfinite evaluation, plane residual/domain checks, sphere refinement, both cone halves, empty/even-root sampling, skipped invalid regions, sampling limits, edge-budget rejection, helix/surface switching, failure atomicity, and background worker completion. Headless egui tests construct both scene interfaces and check finite drawing bounds; they do not verify pixels, layout readability, or interaction. No new dependencies were needed.
+
+Manual extension checklist:
+
+1. Apply `plot x^2-y^2-z^2=0`. Confirm two cone halves along X, surface controls, and wireframe/no-depth label. Rotate/zoom with the existing camera.
+2. Apply sphere `plot x^2+y^2+z^2=4`, saddle `plot z-x*y`, and plane `plot x=0.3`. Confirm they differ without any shape-template controls.
+3. Change X/Y/Z half-extents and resolution independently; **Apply sampling** must rebuild. Confirm the next equation uses the applied sampling values. Increase resolution to compare approximation; do not assume extra resolution proves exactness.
+4. While computing, confirm camera interaction remains possible and editing is disabled until completion. Invalid equations (`plot w`, `plot x=0=1`) must preserve the preceding scene.
+5. `plot x^2=0` may return no crossings; `plot 1/(x-x)` skips undefined regions. Confirm empty-result feedback avoids claiming no solutions. `plot 1/(x-0.13)` may produce a false plane: this is the documented discontinuity limitation.
+6. Return with `create a helix with five turns`; test radius slider and `set height 6` again.
+7. Inspect default/minimum size with the example expander open. Check long equation text, error feedback, and sampling/camera controls are readable.
+
+Automated checks are recorded in README. Native startup is a smoke check only; interactive manual review and image comparison remain outstanding.

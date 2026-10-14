@@ -1,3 +1,8 @@
+use crate::{
+    command,
+    expression::Equation,
+    geometry::{self, Geometry, Sampling},
+};
 use std::f32::consts::TAU;
 
 /// One selected helix. Height is total height; pitch is height / turns.
@@ -54,15 +59,70 @@ impl Helix {
 }
 
 /// Both UI controls and commands replace this same validated scene state.
-#[derive(Default)]
+#[derive(Clone)]
 pub struct Scene {
     pub helix: Helix,
+    pub surface: Option<Surface>,
+    pub geometry: Geometry,
+}
+
+#[derive(Clone)]
+pub struct Surface {
+    pub source: String,
+    pub sampling: Sampling,
+}
+
+impl Default for Scene {
+    fn default() -> Self {
+        let mut scene = Self {
+            helix: Helix::default(),
+            surface: None,
+            geometry: Geometry::default(),
+        };
+        scene.replace(scene.helix).expect("default helix is valid");
+        scene
+    }
 }
 
 impl Scene {
     pub fn replace(&mut self, helix: Helix) -> Result<(), String> {
-        self.helix = helix.validate()?;
+        let helix = helix.validate()?;
+        let points = helix.points();
+        self.geometry = Geometry {
+            lines: points.windows(2).map(|p| [p[0], p[1]]).collect(),
+            bound: helix.radius.hypot(helix.height / 2.0).max(1.0),
+            skipped_tetrahedra: 0,
+        };
+        self.helix = helix;
+        self.surface = None;
         Ok(())
+    }
+
+    pub fn plot(&mut self, source: &str, sampling: Sampling) -> Result<(), String> {
+        let equation = Equation::parse(source)?;
+        let geometry = geometry::mesh(&equation, sampling)?;
+        self.geometry = geometry;
+        self.surface = Some(Surface {
+            source: source.into(),
+            sampling,
+        });
+        Ok(())
+    }
+
+    pub fn request(&mut self, text: &str) -> Result<(), String> {
+        let text = text.trim();
+        if let Some(source) = text.strip_prefix("plot ") {
+            let sampling = self
+                .surface
+                .as_ref()
+                .map_or(Sampling::default(), |s| s.sampling);
+            self.plot(source.trim(), sampling)
+        } else {
+            if self.surface.is_some() && !text.to_lowercase().starts_with("create a helix with ") {
+                return Err("For this surface use 'plot ...' or its sampling controls. Create a helix to use helix commands.".into());
+            }
+            self.replace(command::parse(text, self.helix)?)
+        }
     }
 }
 

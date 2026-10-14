@@ -8,7 +8,7 @@ Learn Rust and 3D visualization by building an approachable mathematical playgro
 
 A Windows desktop app starts with one selected helix of radius 1, height 4, and five turns. A large interactive canvas displays sampled 3D geometry. Requests and sliders/numeric entry edit the same scene. Users orbit, tilt, zoom, and reset the camera. The app shows its parameter interpretation and helpful errors without changing the last valid scene.
 
-The initial curve is a line, with a color progression and start marker. It is not yet a shaded tube or solid surface. Projection is orthographic; crossing lines have no occlusion. A small deterministic parser supports documented phrases without accounts, network access at runtime, or AI credentials. Full conversational understanding, multiple objects, saving, export, taper, animation, arbitrary equations, meshes, and browser deployment are later work.
+The helix is a line with a color progression. Projection is orthographic; crossing lines have no occlusion. A small deterministic parser supports documented phrases without accounts, network access at runtime, or AI credentials. The next implemented milestone adds general bounded implicit equations as triangle-edge wireframes, described below. Full conversational understanding, multiple objects, saving, export, taper, animation, shaded meshes, and browser deployment are later work.
 
 ## Experience
 
@@ -29,14 +29,16 @@ The grammar accepts parameter-before-number or number-before-parameter, optional
 
 Rust 2024 with Cargo handles source, builds, and tests. eframe 0.36.2 supplies egui controls and a desktop window, using its Glow backend. It is the only direct runtime dependency. This keeps the initial code approachable and avoids starting with an engine, ECS, shader pipeline, or web/frontend split. The version and App API were checked against official crate documentation on October 14, 2026; eframe requires Rust 1.95 or later.
 
-- `src/scene.rs`: canonical helix, validation, and pure geometry sampling.
+- `src/scene.rs`: canonical selected helix/surface, validated edits, and cached geometry.
 - `src/command.rs`: text → candidate helix → validation. Parsing never mutates state.
 - `src/lib.rs`: exposes pure logic for tests and later alternate interfaces.
 - `src/main.rs`: widgets and feedback; both edit paths call `Scene::replace`.
-- `src/view.rs`: camera rotation/projection and canvas painting.
+- `src/expression.rs`: bounded arithmetic parser and real-valued equation evaluation.
+- `src/geometry.rs`: renderer-independent world-space lines, sampling settings, and marching tetrahedra.
+- `src/view.rs`: shared camera rotation/projection and shape-independent canvas painting.
 - `tests/scene_workflow.rs`: verifies combined control/command behavior.
 
-The helix is x = r cos(2πnt), y = r sin(2πnt), z = h(t − 1/2), with 0 ≤ t ≤ 1. Sampling uses 96 segments per turn, capped indirectly by the validated turn bound (maximum 1,920 segments). Camera math rotates around the Z axis and then tilts before discarding depth. For this bounded scene, regenerating a small polyline per redraw is acceptable. Cache geometry only when profiling shows a reason. A later GPU renderer can consume the same world-space points, leaving parsing and scene tests intact.
+The helix is x = r cos(2πnt), y = r sin(2πnt), z = h(t − 1/2), with 0 ≤ t ≤ 1. Sampling uses 96 segments per turn, capped indirectly by the validated turn bound (maximum 1,920 segments). Camera math rotates around the Z axis and then tilts before discarding depth. Both shapes cache renderer-independent world-space line segments, regenerated only on applied edits. A later GPU renderer can consume this geometry without changing expression interpretation or scene validation.
 
 ## Milestones and learning progression
 
@@ -71,3 +73,17 @@ UI verification begins with a repeatable manual checklist because geometry tests
 - [eframe dependency features and Rust requirement](https://docs.rs/crate/eframe/0.36.2/source/Cargo.toml)
 - [Rust installation](https://rust-lang.org/tools/install/)
 - [Windows MSVC prerequisites](https://rust-lang.github.io/rustup/installation/windows-msvc.html)
+
+## Implemented extension: general Cartesian implicit equations
+
+The app accepts `plot x^2-y^2-z^2=0` through a general evaluator. An equation is one scalar function F(x,y,z)=0; a left/right equality is normalized by subtraction. Input is data in a restricted arithmetic language, never executable source code. Real finite results alone participate in extraction. One or two variables are allowed and naturally produce surfaces extended along unused axes. Variable-free equations are rejected. Polar coordinates and systems of equations are outside this pass.
+
+Grammar: lowercase x/y/z, finite decimal/scientific numeric literals, unary +/- and binary +, -, *, /, ^, and parentheses. Powers are right-associative and bind more strongly than unary signs; multiplication is explicit. No named functions, pi, assignments, or inequalities. Input is capped at 256 bytes and parser recursion at 64 levels. These limits keep evaluation cost bounded without introducing another dependency.
+
+The adjustable finite Cartesian domain is [-a,a]×[-b,b]×[-c,c], with independent half-extents from 0.1 to 10. Resolution is 8–40 cells along each axis, default 24. The grid is evaluated once; six consistently oriented tetrahedra per cell interpolate sign-crossing edges and produce one or two triangles. Exact-zero samples count as nonnegative; degenerate triangles are omitted. Nonfinite corners exclude that tetrahedron. Linear interpolation uses scaled values to avoid overflow when subtracting large opposite signs.
+
+Maximum work: 68,921 evaluations, 384,000 tetrahedra, 120,000 output triangle edges. Excess output is an error rather than a silently truncated surface. Bounded work does not guarantee a hardware-independent runtime. Surface work runs on one background thread. Existing cached geometry remains usable by the camera while it runs; scene edits are temporarily disabled, preventing stale worker results from overwriting newer edits. Only successful completion replaces the scene, including sampling metadata. Apply sampling explicitly rebuilds; typing a new equation uses the last applied surface settings. There is no cancellation in this pass. Helix controls keep using the same validated scene boundary and regenerate their small geometry immediately.
+
+This is numerical sampling, not an exact real-solution solver. Thin features, singularities, tangencies/even roots may vanish; discontinuities can yield spurious crossings; boundary-clipped surfaces are incomplete. An empty result is not proof that the real solution set is empty. A single scalar equation generally defines a surface and cannot serve as a general arbitrary-space-curve interface. The display explicitly identifies wireframe projection without depth occlusion. Shared/repeated triangle edges are retained; it is a correctness-first initial renderer.
+
+Acceptance: the cone, sphere, plane, and saddle work via the same evaluator; both cone halves appear; camera controls remain shared; independent domain extents and resolution rebuild the current equation; invalid input/settings preserve scene and geometry; returning to a helix retains the initial command/control behavior. Automated tests cover precedence, invalid/non-real evaluation, plane residuals, sphere refinement, cone halves, bounds/output cap, switching, worker completion/failure, and finite headless UI shapes. Full visual/interaction review remains a manual acceptance step in TESTING.md. Rich formula typography remains pending in BACKLOG.md.

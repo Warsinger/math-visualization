@@ -4,6 +4,44 @@ use math_playground::{
 };
 
 #[test]
+fn surfaces_sampling_and_helix_switching_preserve_valid_state() {
+    use math_playground::geometry::Sampling;
+    let mut scene = Scene::default();
+    scene.request("plot x^2-y^2-z^2=0").unwrap();
+    let source = scene.surface.as_ref().unwrap().source.clone();
+    assert!(!scene.geometry.lines.is_empty());
+    let before = scene.geometry.lines.clone();
+    assert!(scene.request("plot x + unknown").is_err());
+    assert_eq!(scene.geometry.lines, before);
+    assert!(scene.request("set radius 2").is_err());
+    let sampling = Sampling {
+        extent: [2.0, 3.0, 4.0],
+        resolution: 16,
+    };
+    scene.plot(&source, sampling).unwrap();
+    assert_eq!(scene.surface.as_ref().unwrap().sampling, sampling);
+    scene.request("plot x=0.3").unwrap();
+    assert_eq!(scene.surface.as_ref().unwrap().sampling, sampling);
+    let before = scene.geometry.lines.clone();
+    assert!(
+        scene
+            .plot(
+                "x",
+                Sampling {
+                    resolution: 100,
+                    ..sampling
+                }
+            )
+            .is_err()
+    );
+    assert_eq!(scene.geometry.lines, before);
+    scene.request("create a helix with three turns").unwrap();
+    assert!(scene.surface.is_none());
+    assert_eq!(scene.helix.turns, 3.0);
+    assert_eq!(scene.geometry.lines.len(), 288);
+}
+
+#[test]
 fn commands_and_controls_share_state_and_errors_are_atomic() {
     let mut scene = Scene::default();
     // The controls submit a candidate through the same boundary as commands.
