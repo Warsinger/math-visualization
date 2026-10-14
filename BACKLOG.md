@@ -1,5 +1,7 @@
 # Project backlog
 
+- [ ] **Multi-platform builds and downloadable GitHub Actions artifacts.** ([#8](https://github.com/Warsinger/math-visualization/issues/8)) **Status: pending.** Extend the existing Windows formatting/lint/test/build CI into a multi-platform build matrix and publish its outputs as downloadable GitHub Actions artifacts. Decide exact operating systems and architectures during implementation; Windows, macOS, and Linux are candidates, not selected commitments. Verify successful builds and artifact naming/contents for every selected target. Release publishing, signing, and installers remain separate undecided scope.
+
 - [ ] **Support the pi constant in equation input.** ([#1](https://github.com/Warsinger/math-visualization/issues/1)) **Status: pending.** Accept both spelled-out `pi` and the Greek symbol `π` as aliases for the same mathematical constant, usable in expressions and function arguments such as `sin(pi/2)` and `cos(π)` with radians. Add parser/evaluation tests for both aliases, their equivalent values, and use within arithmetic and function calls when implementing.
 
 - [ ] **Support Euler's number in equation input.** ([#2](https://github.com/Warsinger/math-visualization/issues/2)) **Status: pending.** Accept `e` as the mathematical constant Euler's number in equations and function arguments such as `ln(e)` and `e^x`. Add parser/evaluation tests for its value and use in expressions, while preserving scientific numeric notation such as `1e-2`. Implement alongside the pending `pi`/`π` constants; no constants are implemented yet.
