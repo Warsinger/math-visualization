@@ -1,0 +1,11 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "Run playground", "type": "process", "command": "cargo", "args": ["run"], "problemMatcher": ["$rustc"] },
+    { "label": "Build", "type": "process", "command": "cargo", "args": ["build"], "group": { "kind": "build", "isDefault": true }, "problemMatcher": ["$rustc"] },
+    { "label": "Tests", "type": "process", "command": "cargo", "args": ["test", "--all-targets"], "problemMatcher": ["$rustc"] },
+    { "label": "Formatting", "type": "process", "command": "cargo", "args": ["fmt", "--all", "--", "--check"], "problemMatcher": [] },
+    { "label": "Clippy", "type": "process", "command": "cargo", "args": ["clippy", "--all-targets", "--", "-D", "warnings"], "problemMatcher": ["$rustc"] },
+    { "label": "Verify", "dependsOrder": "sequence", "dependsOn": ["Formatting", "Clippy", "Tests", "Build"], "problemMatcher": [] }
+  ]
+}
