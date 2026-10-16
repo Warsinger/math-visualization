@@ -1,6 +1,6 @@
 # Cloudflare Pages deployment
 
-Target: **https://math-playground.pages.dev/**, Direct Upload project `math-playground`, production branch `main`, in the owner's Cloudflare account. Confirm the hostname after creation; this configuration does not reserve availability.
+Target: **https://math-playground-3mq.pages.dev/**, Direct Upload project `math-playground`, production branch `main`, in the owner's Cloudflare account. Cloudflare assigned this hostname because the originally requested `math-playground.pages.dev` was unavailable.
 
 Uses free Pages static hosting and the repository's GitHub Actions allowance. No Functions, storage, custom domain, paid plan or Cloudflare Git build is needed. Account/Actions usage limits still apply. See [Pages limits](https://developers.cloudflare.com/pages/platform/limits/) and [Direct Upload CI](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/).
 
