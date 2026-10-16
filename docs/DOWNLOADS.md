@@ -36,3 +36,10 @@ shows a Windows error dialog and attempts to write the latest failure to
 log was saved. The previous startup error is replaced; successful launches leave
 that diagnostic file available. Logs stay local. Code signing and SmartScreen
 reputation are tracked separately.
+
+To verify the failure-reporting path, run `cargo run --release -- --simulate-startup-error`
+or launch the packaged executable with `--simulate-startup-error`. This intentionally
+fails before opening the app, shows the same error dialog, writes the same log,
+and exits with failure after the dialog is dismissed. The message identifies the
+simulation. It replaces any previous startup-error log; it does not modify history
+or graphics settings. Remove the option to launch normally.
