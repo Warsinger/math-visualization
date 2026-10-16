@@ -189,6 +189,10 @@ impl Parser<'_> {
                 self.pos += 1;
                 value
             }
+            Some(0xcf) if self.text[self.pos..].starts_with("π".as_bytes()) => {
+                self.pos += "π".len();
+                Expr::Number(std::f64::consts::PI)
+            }
             Some(c) if c.is_ascii_alphabetic() => {
                 let start = self.pos;
                 while self.peek().is_some_and(|c| c.is_ascii_alphabetic()) {
@@ -196,6 +200,7 @@ impl Parser<'_> {
                 }
                 let name = std::str::from_utf8(&self.text[start..self.pos]).unwrap();
                 match name {
+                    "pi" => Expr::Number(std::f64::consts::PI),
                     "x" => Expr::Variable(0),
                     "y" => Expr::Variable(1),
                     "z" => Expr::Variable(2),
@@ -221,7 +226,7 @@ impl Parser<'_> {
                     }
                     _ => {
                         return Err(format!(
-                            "Unknown name '{name}'. Use x/y/z or ln/sin/cos/tan."
+                            "Unknown name '{name}'. Use x/y/z, pi/π, or ln/sin/cos/tan."
                         ));
                     }
                 }
@@ -279,6 +284,37 @@ impl Parser<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pi_aliases_work_in_functions_arithmetic_and_equations() {
+        for alias in ["pi", "π"] {
+            let eval = |s: String| {
+                Equation::explicit_y(&s)
+                    .unwrap()
+                    .evaluate([0.0; 3])
+                    .unwrap()
+            };
+            assert_eq!(eval(alias.into()), std::f64::consts::PI);
+            assert!((eval(format!("sin({alias}/2)")) - 1.0).abs() < 1e-12);
+            assert!((eval(format!("cos({alias})")) + 1.0).abs() < 1e-12);
+            assert_eq!(eval(format!("-{alias}^2")), -std::f64::consts::PI.powi(2));
+            assert_eq!(
+                Equation::parse(&format!("x={alias}")).unwrap().evaluate([
+                    std::f64::consts::PI,
+                    0.0,
+                    0.0
+                ]),
+                Some(0.0)
+            );
+            assert!(Equation::parse(alias).is_err());
+            assert!(Equation::explicit_y(&format!("2{alias}")).is_err());
+            assert!(Equation::explicit_y(&format!("{alias}(x)")).is_err());
+        }
+        for source in ["piano", "PI", "πx", "ππ", "Π", "π+💥"] {
+            assert!(Equation::explicit_y(source).is_err(), "{source}");
+        }
+        assert!(Equation::explicit_y(&"π+".repeat(86)).is_err());
+        assert!(Equation::explicit_y(&format!("{}π{}", "(".repeat(65), ")".repeat(65))).is_err());
+    }
     #[test]
     fn functions_radians_nested_calls_and_precedence() {
         let eval = |s, x| Equation::parse(s).unwrap().evaluate([x, 0.0, 0.0]).unwrap();
