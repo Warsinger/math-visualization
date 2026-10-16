@@ -184,7 +184,7 @@ impl Playground {
                                         .map(|d| d.format("%Y-%m-%d %H:%M:%S UTC").to_string())
                                         .unwrap_or_else(|| "Unknown time".into());
                                 ui.small(date);
-                                ui.label(&entry.request);
+                                ui.label(egui::RichText::new(&entry.request).font(egui::FontId::monospace(14.0)));
                                 match &entry.outcome {
                                     Outcome::Success { snapshot } => {
                                         ui.colored_label(egui::Color32::LIGHT_GREEN, "Succeeded");
@@ -254,6 +254,7 @@ impl Playground {
             ui.add_enabled_ui(self.pending.is_none(), |ui| {
                 ui.horizontal(|ui| {
                     let response = ui.add(egui::TextEdit::singleline(&mut self.request)
+                        .font(egui::FontId::monospace(14.0))
                         .desired_width((ui.available_width() - 85.0).max(100.0))
                         .hint_text("plot x^2 - y^2 - z^2 = 0"));
                     let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
