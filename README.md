@@ -12,6 +12,8 @@ Start with a five-turn helix, then explore equations and functions. The [illustr
 
 ## Windows setup
 
+To run a build without installing Rust, see [downloadable CI builds](docs/DOWNLOADS.md) for Windows x64, Linux x64, and macOS Apple Silicon, including runtime prerequisites and checksums.
+
 1. Install [official Rust via rustup](https://rust-lang.org/tools/install/) with the default stable MSVC toolchain. This project needs Rust 1.95 or newer. Rustup supplies Cargo; select the default profile for rustfmt and Clippy.
 2. Install [Visual Studio Build Tools](https://rust-lang.github.io/rustup/installation/windows-msvc.html) with **Desktop development with C++**, MSVC x64/x86 tools, and a Windows SDK. Rust uses the Microsoft linker even though this app contains Rust source only.
 3. Restart VS Code and terminals after installation so they see the updated PATH. Verify `rustc --version`, `cargo --version`, and `rustup show`.
@@ -62,7 +64,7 @@ cargo test --locked --all-targets
 cargo build --locked
 ```
 
-If starting from a copy without Cargo.lock, run `cargo build` once to generate it before using `--locked`, and keep that file with the application. CI is configured in `.github/workflows/ci.yml` for a future GitHub repository. It does not run until the project is pushed there. No repository commit/push is performed by setup.
+If starting from a copy without Cargo.lock, run `cargo build` once to generate it before using `--locked`, and keep that file with the application. [Rust checks](https://github.com/Warsinger/math-visualization/actions) runs formatting once, then strict lint, debug and release tests, and release builds on Windows x64, Linux x64, and macOS Apple Silicon. Per-platform dependency/build caching reduces compatible repeat work. Successful platform jobs publish validated packages with diagnostic symbols and checksums as GitHub Actions artifacts, retained for 14 days. See [download/build details](docs/DOWNLOADS.md).
 
 ## Setup validation status
 
