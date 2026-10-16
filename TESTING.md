@@ -2,7 +2,13 @@
 
 ## Automated checks
 
-Run the four commands in README or the VS Code **Verify** task before each meaningful change. rustfmt provides consistent layout; Clippy catches common mistakes; tests protect behavior; build ensures the GUI binary links. CI repeats them on Windows. Avoid accepting a green geometry test as proof that the GUI works.
+Run the four commands in README or the VS Code **Verify** task before each meaningful change. rustfmt provides consistent layout; Clippy catches common mistakes; tests protect behavior; build ensures the GUI binary links. CI repeats these checks on Windows x64, Linux x64, and macOS Apple Silicon and builds release executables. Avoid accepting a green geometry test as proof that the GUI works.
+
+## CI packages
+
+`scripts/package.ps1 -Target <triple>` packages the matching `cargo +stable build --locked --release --target <triple>` output. It rejects missing/empty binaries and verifies that the archive contains exactly the executable, RUNNING.md and build-info.json, then generates a SHA-256 checksum. Unix tar archives retain executable permissions inside the outer Actions ZIP. Run the script with PowerShell 7; supported triples are listed in [download instructions](docs/DOWNLOADS.md).
+
+For workflow changes, validate GitHub Actions syntax (for example with actionlint), run local Rust checks and package the native target. Confirm every matrix job passes in GitHub before treating the other platforms as verified. Download each platform artifact, compare the checksum, inspect its contents, and perform the UI protocol on an actual matching graphical desktop. CI compilation/headless tests do not establish driver compatibility. Signing/installers and release publishing are outside this workflow.
 
 Current tests cover radius and endpoints over the sampled curve, sampling density, default creation, numeric and word commands, fractional turns, pitch/turn ordering, invalid and unsupported syntax, ambiguous parameters, and failure atomicity. Camera tests verify center/vertical mapping and a quarter-turn rotation. Integration tests simulate a control edit followed by a command and verify both use one scene. All 9 tests passed during initial setup. Future regressions should become focused tests before fixes.
 

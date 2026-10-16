@@ -2,18 +2,59 @@ name: Rust checks
 on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   verify:
-    runs-on: windows-latest
+    name: Verify and package (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: macos-15
+            target: aarch64-apple-darwin
+    defaults:
+      run:
+        shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install Linux build prerequisites
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libgl1-mesa-dev
       - name: Install stable Rust tools
-        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy --target ${{ matrix.target }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc +stable --version
       - name: Formatting
         run: cargo +stable fmt --all -- --check
       - name: Lint
-        run: cargo +stable clippy --locked --all-targets -- -D warnings
+        run: cargo +stable clippy --locked --target ${{ matrix.target }} --all-targets -- -D warnings
       - name: Test
-        run: cargo +stable test --locked --all-targets
-      - name: Build
-        run: cargo +stable build --locked
+        run: cargo +stable test --locked --target ${{ matrix.target }} --all-targets
+      - name: Build release executable
+        run: cargo +stable build --locked --release --target ${{ matrix.target }}
+      - name: Package and verify contents
+        run: ./scripts/package.ps1 -Target '${{ matrix.target }}'
+      - name: Upload downloadable package and checksum
+        uses: actions/upload-artifact@v6
+        with:
+          name: math-playground-${{ matrix.target }}
+          path: |
+            dist/math-playground-${{ matrix.target }}.zip
+            dist/math-playground-${{ matrix.target }}.tar.gz
+            dist/math-playground-${{ matrix.target }}.sha256
+          if-no-files-found: error
+          retention-days: 14
