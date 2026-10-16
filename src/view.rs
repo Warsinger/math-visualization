@@ -67,6 +67,7 @@ pub fn canvas(
     camera: &mut Camera,
     height: f32,
     curve: Option<CurveSampling>,
+    tangent: Option<math_playground::derivative::Tangent>,
 ) -> (egui::Rect, Option<[f32; 3]>) {
     let (response, painter) = ui.allocate_painter(
         egui::vec2(ui.available_width().max(50.0), height),
@@ -181,6 +182,18 @@ pub fn canvas(
     if let Some(point) = selected {
         painter.circle_filled(project(point), 4.0, Color32::YELLOW);
     }
+    if let (Some(tangent), Some(settings)) = (tangent, curve) {
+        if let Some(line) = tangent.segment(settings.extent) {
+            painter.line_segment(line.map(project), Stroke::new(2.0, Color32::YELLOW));
+        }
+        if tangent.y.abs() <= f64::from(settings.extent[1]) {
+            painter.circle_filled(
+                project([tangent.x as f32, tangent.y as f32, 0.0]),
+                4.0,
+                Color32::YELLOW,
+            );
+        }
+    }
     painter.text(
         rect.left_top() + egui::vec2(14.0, 14.0),
         egui::Align2::LEFT_TOP,
@@ -257,6 +270,7 @@ mod tests {
                         &mut camera,
                         200.0,
                         Some(CurveSampling::default()),
+                        None,
                     );
                     inspection_readout(ui, selected, equation.as_ref());
                 });

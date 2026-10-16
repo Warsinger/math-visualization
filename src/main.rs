@@ -26,6 +26,8 @@ struct Playground {
     pending_history_request: Option<String>,
     plot_mode: PlotMode,
     curve_sampling: CurveSampling,
+    tangent_enabled: bool,
+    tangent_x: f64,
 }
 
 impl Default for Playground {
@@ -43,6 +45,8 @@ impl Default for Playground {
             pending_history_request: None,
             plot_mode: PlotMode::Auto,
             curve_sampling: CurveSampling::default(),
+            tangent_enabled: false,
+            tangent_x: 0.0,
         }
     }
 }
@@ -287,12 +291,14 @@ impl Playground {
             let canvas_height = (ui.available_height() - 190.0).max(120.0);
             let mut inspected_point = None;
             let mut inspection_equation = None;
+            let mut tangent = None;
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(255.0);
                     ui.add_enabled_ui(self.pending.is_none(), |ui| {
                         if let Some(curve)=&self.scene.curve {
                             let source=curve.source.clone();
+                            let applied_extent = f64::from(curve.sampling.extent[0]);
                             ui.heading("Selected · 2D curve");
                             for (axis,extent) in ["X ±","Y ±"].into_iter().zip(&mut self.curve_sampling.extent) {
                                 ui.add(egui::Slider::new(extent,0.1..=20.0).text(axis));
@@ -302,7 +308,25 @@ impl Playground {
                             if ui.button("Apply sampling").clicked() {
                                 let settings=self.curve_sampling;
                                 self.pending_history_request=Some(format!("plot {source}"));
+                                let source = source.clone();
                                 self.start(move |scene|scene.plot_curve(&source,settings));
+                            }
+                            ui.checkbox(&mut self.tangent_enabled, "Explore tangent");
+                            if self.tangent_enabled {
+                                if math_playground::expression::Equation::explicit_y(&source).is_ok() {
+                                    let extent = applied_extent;
+                                    self.tangent_x = self.tangent_x.clamp(-extent, extent);
+                                    ui.add(egui::Slider::new(&mut self.tangent_x, -extent..=extent).text("Point x"));
+                                    match math_playground::derivative::tangent(&source, self.tangent_x) {
+                                        Ok(value) => {
+                                            ui.label(format!("Point ({:.4}, {:.4})", value.x, value.y));
+                                            ui.label(format!("Numerical f'(x) ≈ {:.6}", value.slope));
+                                            tangent = Some(value);
+                                        }
+                                        Err(error) => { ui.label(error); }
+                                    }
+                                    ui.small("One-sided finite differences; convergence is approximate, not symbolic proof.");
+                                } else { ui.label("Tangent exploration requires explicit y=f(x)."); }
                             }
                         } else if let Some(surface) = &self.scene.surface {
                             let source = surface.source.clone();
@@ -348,7 +372,7 @@ impl Playground {
                 } else if let Some(surface) = &self.scene.surface {
                     math_playground::expression::Equation::parse(&surface.source).ok()
                 } else { None };
-                (canvas_rect,inspected_point)=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling));
+                (canvas_rect,inspected_point)=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling), tangent);
             });
             ui.allocate_ui(egui::vec2(ui.available_width(), 65.0), |ui| {
                 view::inspection_readout(ui, inspected_point, inspection_equation.as_ref());
@@ -426,7 +450,10 @@ mod tests {
 
     #[test]
     fn all_scene_types_generate_finite_headless_ui_shapes() {
-        let mut app = Playground::default();
+        let mut app = Playground {
+            tangent_enabled: true,
+            ..Default::default()
+        };
         for (request, mode) in [
             ("create a helix with five turns", PlotMode::ThreeD),
             ("plot x^2-y^2-z^2=0", PlotMode::ThreeD),
@@ -532,6 +559,7 @@ mod tests {
             for mode in [PlotMode::TwoD, PlotMode::ThreeD] {
                 let mut app = Playground {
                     history_open: true,
+                    tangent_enabled: true,
                     ..Default::default()
                 };
                 if mode == PlotMode::TwoD {
