@@ -1,6 +1,34 @@
 use eframe::egui::{self, Color32, Pos2, Stroke};
 use math_playground::curve::CurveSampling;
+use math_playground::expression::Equation;
 use math_playground::geometry::Geometry;
+
+/// Snap to the closest displayed segment within eight logical pixels. In 3D,
+/// screen distance wins; this wireframe renderer does not resolve occlusion.
+fn pick(
+    lines: &[[[f32; 3]; 2]],
+    pointer: Pos2,
+    project: impl Fn([f32; 3]) -> Pos2,
+) -> Option<[f32; 3]> {
+    let mut best = 8.0_f32.powi(2);
+    let mut selected = None;
+    for [a, b] in lines {
+        let pa = project(*a);
+        let pb = project(*b);
+        let edge = pb - pa;
+        let t = if edge.length_sq() > 1e-12 {
+            ((pointer - pa).dot(edge) / edge.length_sq()).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let distance = pointer.distance_sq(pa + t * edge);
+        if distance.is_finite() && distance < best {
+            best = distance;
+            selected = Some(std::array::from_fn(|i| a[i] + t * (b[i] - a[i])));
+        }
+    }
+    selected
+}
 
 pub struct Camera {
     pub yaw: f32,
@@ -39,6 +67,7 @@ pub fn canvas(
     camera: &mut Camera,
     height: f32,
     curve: Option<CurveSampling>,
+    equation: Option<&Equation>,
 ) -> egui::Rect {
     let (response, painter) = ui.allocate_painter(
         egui::vec2(ui.available_width().max(50.0), height),
@@ -143,6 +172,37 @@ pub fn canvas(
             Stroke::new(1.2, color),
         );
     }
+    if !response.dragged()
+        && let Some(pointer) = response.hover_pos()
+        && let Some(point) = pick(&geometry.lines, pointer, project)
+    {
+        painter.circle_filled(project(point), 4.0, Color32::YELLOW);
+        response.on_hover_ui_at_pointer(|ui| {
+            ui.label(format!(
+                "x = {:.6}, y = {:.6}, z = {:.6}",
+                point[0], point[1], point[2]
+            ));
+            match equation {
+                Some(equation) => match equation.evaluate(point.map(f64::from)) {
+                    Some(value) => {
+                        ui.label(format!("F(x,y,z) = {value:.6e}"));
+                    }
+                    None => {
+                        ui.label("F is undefined or nonfinite at this point.");
+                    }
+                },
+                None => {
+                    ui.label("Parametric helix: no implicit equation residual.");
+                }
+            }
+            ui.label("Snapped to a sampled line segment; coordinates are approximate.");
+            ui.label("F = left minus right (or function minus y for shorthand).");
+            ui.label("Residual is an approximation check, not proof of exactness.");
+            if curve.is_none() {
+                ui.label("Overlapping 3D lines use screen proximity, without depth occlusion.");
+            }
+        });
+    }
     painter.text(
         rect.left_top() + egui::vec2(14.0, 14.0),
         egui::Align2::LEFT_TOP,
@@ -160,6 +220,34 @@ pub fn canvas(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn picking_interpolates_world_coordinates_and_rejects_distant_points() {
+        let lines = [[[0.0, 0.0, 2.0], [10.0, 0.0, 4.0]]];
+        let project = |p: [f32; 3]| Pos2::new(p[0] * 10.0, p[1] * 10.0);
+        assert_eq!(
+            pick(&lines, Pos2::new(25.0, 2.0), project),
+            Some([2.5, 0.0, 2.5])
+        );
+        assert_eq!(pick(&lines, Pos2::new(25.0, 9.0), project), None);
+        assert_eq!(pick(&[], Pos2::ZERO, project), None);
+        assert_eq!(
+            pick(&[[[0.0, 0.0, 2.0], [0.0, 0.0, 4.0]]], Pos2::ZERO, project),
+            Some([0.0, 0.0, 2.0])
+        );
+        let point = pick(&lines, Pos2::new(25.0, 2.0), project).unwrap();
+        assert_eq!(
+            Equation::parse("x-z")
+                .unwrap()
+                .evaluate(point.map(f64::from)),
+            Some(0.0)
+        );
+        assert_eq!(
+            Equation::parse("ln(y)")
+                .unwrap()
+                .evaluate(point.map(f64::from)),
+            None
+        );
+    }
     #[test]
     fn planar_projection_is_xy_with_pan_and_ignores_orbit_and_depth() {
         let camera = Camera {

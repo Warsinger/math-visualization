@@ -339,8 +339,14 @@ impl Playground {
                         ui.add(egui::Slider::new(&mut self.camera.tilt, -1.5..=1.5).text("Tilt"));
                     }
                     ui.label(if self.scene.curve.is_some(){"Drag to pan. Scroll to zoom."}else{"Drag to rotate. Scroll to zoom."});
+                    ui.label("Hover near a line to inspect coordinates and residual.");
                 });
-                canvas_rect=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling));
+                let equation = if let Some(curve) = &self.scene.curve {
+                    math_playground::expression::Equation::planar(&curve.source).ok()
+                } else if let Some(surface) = &self.scene.surface {
+                    math_playground::expression::Equation::parse(&surface.source).ok()
+                } else { None };
+                canvas_rect=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling),equation.as_ref());
             });
             ui.separator();
             if let Some(curve)=&self.scene.curve {
