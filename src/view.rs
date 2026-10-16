@@ -1,6 +1,34 @@
 use eframe::egui::{self, Color32, Pos2, Stroke};
 use math_playground::curve::CurveSampling;
+use math_playground::expression::Equation;
 use math_playground::geometry::Geometry;
+
+/// Snap to the closest displayed segment within eight logical pixels. In 3D,
+/// screen distance wins; this wireframe renderer does not resolve occlusion.
+fn pick(
+    lines: &[[[f32; 3]; 2]],
+    pointer: Pos2,
+    project: impl Fn([f32; 3]) -> Pos2,
+) -> Option<[f32; 3]> {
+    let mut best = 8.0_f32.powi(2);
+    let mut selected = None;
+    for [a, b] in lines {
+        let pa = project(*a);
+        let pb = project(*b);
+        let edge = pb - pa;
+        let t = if edge.length_sq() > 1e-12 {
+            ((pointer - pa).dot(edge) / edge.length_sq()).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let distance = pointer.distance_sq(pa + t * edge);
+        if distance.is_finite() && distance < best {
+            best = distance;
+            selected = Some(std::array::from_fn(|i| a[i] + t * (b[i] - a[i])));
+        }
+    }
+    selected
+}
 
 pub struct Camera {
     pub yaw: f32,
@@ -39,7 +67,7 @@ pub fn canvas(
     camera: &mut Camera,
     height: f32,
     curve: Option<CurveSampling>,
-) -> egui::Rect {
+) -> (egui::Rect, Option<[f32; 3]>) {
     let (response, painter) = ui.allocate_painter(
         egui::vec2(ui.available_width().max(50.0), height),
         egui::Sense::drag(),
@@ -143,6 +171,16 @@ pub fn canvas(
             Stroke::new(1.2, color),
         );
     }
+    let selected = if response.dragged() {
+        None
+    } else {
+        response
+            .hover_pos()
+            .and_then(|pointer| pick(&geometry.lines, pointer, project))
+    };
+    if let Some(point) = selected {
+        painter.circle_filled(project(point), 4.0, Color32::YELLOW);
+    }
     painter.text(
         rect.left_top() + egui::vec2(14.0, 14.0),
         egui::Align2::LEFT_TOP,
@@ -154,12 +192,126 @@ pub fn canvas(
         egui::FontId::proportional(14.0),
         Color32::GRAY,
     );
-    rect
+    (rect, selected)
+}
+
+/// Ordinary layout content: immediate and independent of tooltip timers.
+pub fn inspection_readout(ui: &mut egui::Ui, point: Option<[f32; 3]>, equation: Option<&Equation>) {
+    if let Some(point) = point {
+        ui.monospace(format!(
+            "x = {:.6}, y = {:.6}, z = {:.6}",
+            point[0], point[1], point[2]
+        ));
+        ui.label(match equation {
+            Some(equation) => match equation.evaluate(point.map(f64::from)) {
+                Some(value) => format!("Residual F = {value:.6e}"),
+                None => "Residual F is undefined or nonfinite at this point.".into(),
+            },
+            None => "Parametric helix: no implicit equation residual.".into(),
+        });
+    } else {
+        ui.label("Point inspection: hover near a plotted line.");
+        ui.label("Coordinates and residual appear here immediately; pause dragging to inspect.");
+    }
+    ui.small("Approximate segment point; F = left minus right (shorthand f(x) minus y). Not proof of exactness.");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn hover_readout_is_visible_immediately_without_tooltip_delay() {
+        for (source, expected) in [
+            (Some("y=0"), "Residual F ="),
+            (Some("ln(y)"), "undefined or nonfinite"),
+            (None, "Parametric helix"),
+        ] {
+            let ctx = egui::Context::default();
+            let geometry = Geometry {
+                lines: vec![[[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]],
+                bound: 1.0,
+                ..Default::default()
+            };
+            let equation = source.map(|s| Equation::parse(s).unwrap());
+            let mut camera = Camera::default();
+            let mut rect = egui::Rect::NOTHING;
+            for hover in [false, true, false] {
+                let mut selected = None;
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        Pos2::ZERO,
+                        egui::vec2(800.0, 600.0),
+                    )),
+                    time: Some(0.0),
+                    events: vec![egui::Event::PointerMoved(if hover {
+                        rect.center()
+                    } else {
+                        Pos2::new(799.0, 599.0)
+                    })],
+                    ..Default::default()
+                };
+                let mut output = ctx.run_ui(input, |ui| {
+                    (rect, selected) = canvas(
+                        ui,
+                        &geometry,
+                        &mut camera,
+                        200.0,
+                        Some(CurveSampling::default()),
+                    );
+                    inspection_readout(ui, selected, equation.as_ref());
+                });
+                output.textures_delta.clear();
+                let texts: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|s| match &s.shape {
+                        egui::Shape::Text(t) => Some(t.galley.job.text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(selected.is_some(), hover);
+                assert!(
+                    texts.iter().any(|s| s.contains(if hover {
+                        expected
+                    } else {
+                        "Point inspection:"
+                    })),
+                    "{texts:?}"
+                );
+                if hover {
+                    assert!(texts.iter().any(|s| s.contains("x = 0.000000")));
+                }
+            }
+        }
+    }
+    #[test]
+    fn picking_interpolates_world_coordinates_and_rejects_distant_points() {
+        let lines = [[[0.0, 0.0, 2.0], [10.0, 0.0, 4.0]]];
+        let project = |p: [f32; 3]| Pos2::new(p[0] * 10.0, p[1] * 10.0);
+        assert_eq!(
+            pick(&lines, Pos2::new(25.0, 2.0), project),
+            Some([2.5, 0.0, 2.5])
+        );
+        assert_eq!(pick(&lines, Pos2::new(25.0, 9.0), project), None);
+        assert_eq!(pick(&[], Pos2::ZERO, project), None);
+        assert_eq!(
+            pick(&[[[0.0, 0.0, 2.0], [0.0, 0.0, 4.0]]], Pos2::ZERO, project),
+            Some([0.0, 0.0, 2.0])
+        );
+        let point = pick(&lines, Pos2::new(25.0, 2.0), project).unwrap();
+        assert_eq!(
+            Equation::parse("x-z")
+                .unwrap()
+                .evaluate(point.map(f64::from)),
+            Some(0.0)
+        );
+        assert_eq!(
+            Equation::parse("ln(y)")
+                .unwrap()
+                .evaluate(point.map(f64::from)),
+            None
+        );
+    }
     #[test]
     fn planar_projection_is_xy_with_pan_and_ignores_orbit_and_depth() {
         let camera = Camera {
