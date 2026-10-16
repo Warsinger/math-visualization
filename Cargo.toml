@@ -11,3 +11,8 @@ eframe = { version = "=0.36.2", default-features = false, features = ["default_f
 
 [profile.dev]
 opt-level = 1
+
+# Keep optimized behavior while retaining backtrace locations for release failures.
+[profile.release]
+debug = 1
+split-debuginfo = "off"

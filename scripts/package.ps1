@@ -18,6 +18,14 @@ $stage = Join-Path $dist ([guid]::NewGuid().ToString())
 $package = Join-Path $stage $packageName
 New-Item -ItemType Directory -Path $package -Force | Out-Null
 Copy-Item -LiteralPath $binary -Destination (Join-Path $package $executable)
+$symbols = @()
+if ($Target -eq 'x86_64-pc-windows-msvc') {
+    # MSVC writes symbols beside the executable, even with split-debuginfo=off.
+    $symbolFile = Join-Path $projectRoot "target/$Target/release/math_playground.pdb"
+    if (-not (Test-Path -LiteralPath $symbolFile -PathType Leaf)) { throw "Missing release symbols: $symbolFile" }
+    Copy-Item -LiteralPath $symbolFile -Destination $package
+    $symbols = @('math_playground.pdb')
+}
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/DOWNLOADS.md') -Destination (Join-Path $package 'RUNNING.md')
 $revision = git -C $projectRoot rev-parse HEAD
 if ($LASTEXITCODE -ne 0) { throw 'Cannot determine source revision.' }
@@ -25,7 +33,7 @@ $rustVersion = rustc +stable --version
 if ($LASTEXITCODE -ne 0) { throw 'Cannot determine Rust version.' }
 $info = [ordered]@{ target = $Target; revision = $revision; rust = $rustVersion }
 $info | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $package 'build-info.json') -Encoding utf8
-$expected = @($executable, 'RUNNING.md', 'build-info.json') | Sort-Object
+$expected = @($executable, 'RUNNING.md', 'build-info.json') + $symbols | Sort-Object
 $actual = @(Get-ChildItem -LiteralPath $package -File | Select-Object -ExpandProperty Name | Sort-Object)
 if (Compare-Object $expected $actual) { throw 'Unexpected package contents.' }
 if ((Get-ChildItem -LiteralPath $package -Directory).Count -ne 0) { throw 'Unexpected package subdirectories.' }

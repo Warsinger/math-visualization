@@ -10,10 +10,25 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  formatting:
+    name: Formatting
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install formatter
+        run: rustup toolchain install stable --profile minimal --component rustfmt
+      - name: Check formatting
+        run: cargo +stable fmt --all -- --check
   verify:
+    needs: formatting
     name: Verify and package (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
+    env:
+      RUST_BACKTRACE: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -41,13 +56,20 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy --target ${{ matrix.target }}
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup override set stable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           rustc +stable --version
-      - name: Formatting
-        run: cargo +stable fmt --all -- --check
+      - name: Restore Rust dependency and build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+          cache-bin: "false"
       - name: Lint
         run: cargo +stable clippy --locked --target ${{ matrix.target }} --all-targets -- -D warnings
-      - name: Test
+      - name: Debug tests
         run: cargo +stable test --locked --target ${{ matrix.target }} --all-targets
+      - name: Release tests
+        run: cargo +stable test --locked --release --target ${{ matrix.target }} --all-targets
       - name: Build release executable
         run: cargo +stable build --locked --release --target ${{ matrix.target }}
       - name: Package and verify contents

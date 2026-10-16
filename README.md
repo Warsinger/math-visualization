@@ -64,7 +64,7 @@ cargo test --locked --all-targets
 cargo build --locked
 ```
 
-If starting from a copy without Cargo.lock, run `cargo build` once to generate it before using `--locked`, and keep that file with the application. [Rust checks](https://github.com/Warsinger/math-visualization/actions) runs formatting, strict lint, tests, and release builds on Windows x64, Linux x64, and macOS Apple Silicon. Successful platform jobs publish validated packages and checksums as GitHub Actions artifacts, retained for 14 days. See [download/build details](docs/DOWNLOADS.md).
+If starting from a copy without Cargo.lock, run `cargo build` once to generate it before using `--locked`, and keep that file with the application. [Rust checks](https://github.com/Warsinger/math-visualization/actions) runs formatting once, then strict lint, debug and release tests, and release builds on Windows x64, Linux x64, and macOS Apple Silicon. Per-platform dependency/build caching reduces compatible repeat work. Successful platform jobs publish validated packages with diagnostic symbols and checksums as GitHub Actions artifacts, retained for 14 days. See [download/build details](docs/DOWNLOADS.md).
 
 ## Setup validation status
 
