@@ -105,13 +105,23 @@ impl Playground {
         }
     }
 
-    fn history_ui(&mut self, ui: &mut egui::Ui) {
+    fn history_ui(&mut self, ui: &mut egui::Ui) -> Option<egui::Rect> {
+        if !self.history_open {
+            return None;
+        }
         let mut restore = None;
         let mut retry = None;
-        egui::Window::new("History")
-            .open(&mut self.history_open)
-            .default_width(600.0)
-            .show(ui.ctx(), |ui| {
+        let panel = egui::Panel::right("history_panel")
+            .default_size(300.0)
+            .min_size(260.0)
+            .max_size((ui.available_width()-600.0).clamp(260.0,360.0))
+            .resizable(true)
+            .show(ui, |ui| {
+                ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
+                ui.horizontal(|ui| {
+                    ui.heading("History");
+                    if ui.button("Hide").clicked() { self.history_open=false; }
+                });
                 ui.label("Newest first · up to 200 entries · timestamps in UTC");
             ui.small("Restore uses saved plot settings. Edit/retry fills the input; current settings apply when submitted.");
                 if let Some(path) = &self.history.path {
@@ -135,7 +145,7 @@ impl Playground {
                         ui.label("No history yet. Apply a request or add the current plot.");
                     }
                     egui::ScrollArea::vertical()
-                        .max_height(450.0)
+                        .max_height(ui.available_height())
                         .show(ui, |ui| {
                             for entry in self.history.history.entries.iter().rev() {
                                 ui.separator();
@@ -184,16 +194,19 @@ impl Playground {
             self.request = snapshot.request();
             self.start(move |scene| snapshot.restore(scene));
         }
+        Some(panel.response.rect)
     }
 }
 
 impl Playground {
-    fn draw(&mut self, ui: &mut egui::Ui) {
+    fn draw(&mut self, ui: &mut egui::Ui) -> (egui::Rect, Option<egui::Rect>) {
         self.finish();
         if self.pending.is_some() {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(50));
         }
+        let history_rect = self.history_ui(ui);
+        let mut canvas_rect = egui::Rect::NOTHING;
         egui::CentralPanel::default().show(ui, |ui| {
             ui.heading("Mathematical playground");
             ui.label("Helices and numerical implicit surfaces in Cartesian x, y, z.");
@@ -214,7 +227,7 @@ impl Playground {
             let color = if self.error { egui::Color32::LIGHT_RED } else { egui::Color32::LIGHT_GREEN };
             ui.colored_label(color, &self.feedback);
             ui.horizontal(|ui| {
-                if ui.button("History").clicked() { self.history_open=true; }
+                if ui.selectable_label(self.history_open,"History").clicked() { self.history_open = !self.history_open; }
                 ui.small(format!("{} entries",self.history.history.entries.len()));
             });
             if let Some(warning)=&self.history.warning { ui.colored_label(egui::Color32::YELLOW,warning); }
@@ -267,7 +280,7 @@ impl Playground {
                     ui.add(egui::Slider::new(&mut self.camera.tilt, -1.5..=1.5).text("Tilt"));
                     ui.label("Drag to rotate. Scroll over canvas to zoom.");
                 });
-                view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height);
+                canvas_rect=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height);
             });
             ui.separator();
             if let Some(surface) = &self.scene.surface {
@@ -278,7 +291,7 @@ impl Playground {
                 ui.label("Height stays fixed when turns change. Pitch = height / turns. Units are abstract.");
             }
         });
-        self.history_ui(ui);
+        (canvas_rect, history_rect)
     }
 }
 
@@ -325,7 +338,9 @@ mod tests {
                 )),
                 ..Default::default()
             };
-            let mut output = ctx.run_ui(input, |ui| app.draw(ui));
+            let mut output = ctx.run_ui(input, |ui| {
+                app.draw(ui);
+            });
             // No GPU backend in this test: intentionally discard texture uploads.
             output.textures_delta.clear();
             assert!(!output.shapes.is_empty());
@@ -399,9 +414,47 @@ mod tests {
             },
         );
         let ctx = egui::Context::default();
-        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.draw(ui));
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.draw(ui);
+        });
         output.textures_delta.clear();
         assert!(!output.shapes.is_empty());
         assert_eq!(app.history.history.entries.len(), 2);
+    }
+
+    #[test]
+    fn docked_history_never_overlaps_canvas_and_hiding_restores_width() {
+        for size in [egui::vec2(950.0, 760.0), egui::vec2(1150.0, 760.0)] {
+            let mut app = Playground {
+                history_open: true,
+                ..Default::default()
+            };
+            let ctx = egui::Context::default();
+            let input = || egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                ..Default::default()
+            };
+            let mut layout = (egui::Rect::NOTHING, None);
+            for _ in 0..2 {
+                let mut output = ctx.run_ui(input(), |ui| {
+                    layout = app.draw(ui);
+                });
+                output.textures_delta.clear();
+            }
+            let (canvas, history) = layout;
+            let history = history.expect("history is docked");
+            assert!(
+                !canvas.intersects(history),
+                "{canvas:?} overlaps {history:?}"
+            );
+            assert!(canvas.width() > 250.0);
+            app.history_open = false;
+            let mut output = ctx.run_ui(input(), |ui| {
+                layout = app.draw(ui);
+            });
+            output.textures_delta.clear();
+            assert!(layout.1.is_none());
+            assert!(layout.0.width() > canvas.width() + 200.0);
+        }
     }
 }

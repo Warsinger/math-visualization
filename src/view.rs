@@ -27,7 +27,12 @@ impl Camera {
     }
 }
 
-pub fn canvas(ui: &mut egui::Ui, geometry: &Geometry, camera: &mut Camera, height: f32) {
+pub fn canvas(
+    ui: &mut egui::Ui,
+    geometry: &Geometry,
+    camera: &mut Camera,
+    height: f32,
+) -> egui::Rect {
     let (response, painter) = ui.allocate_painter(
         egui::vec2(ui.available_width().max(50.0), height),
         egui::Sense::drag(),
@@ -79,6 +84,7 @@ pub fn canvas(ui: &mut egui::Ui, geometry: &Geometry, camera: &mut Camera, heigh
         egui::FontId::proportional(14.0),
         Color32::GRAY,
     );
+    rect
 }
 
 #[cfg(test)]

@@ -37,7 +37,7 @@ The first build downloads dependencies and takes longer. Normal app use needs no
 
 ## History for repeatable exploration
 
-Open **History** to review the newest 200 entries, including submitted requests, successful **Apply sampling** operations, UTC timestamps, and success/error outcomes. **Restore** rebuilds a successful plot with its saved helix parameters or equation, bounds and resolution, regardless of the current scene. **Edit/retry** fills the request field; applying that text uses the current scene's settings. After adjusting sliders, use **Add current plot** to keep that configuration without recording every slider movement. Restore itself does not add duplicate entries. **Clear history** clears the retained list.
+Toggle **History** to open a resizable docked panel on the right (use **Hide** or the toggle to reclaim the space). It reserves layout space instead of overlaying the visualization. Review the newest 200 entries, including submitted requests, successful **Apply sampling** operations, UTC timestamps, and success/error outcomes. **Restore** rebuilds a successful plot with its saved helix parameters or equation, bounds and resolution, regardless of the current scene. **Edit/retry** fills the request field; applying that text uses the current scene's settings. After adjusting sliders, use **Add current plot** to keep that configuration without recording every slider movement. Restore itself does not add duplicate entries. **Clear history** clears the retained list.
 
 History saves automatically between sessions as versioned JSON in a per-user application-data directory, outside the executable and repository:
 
