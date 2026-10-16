@@ -20,15 +20,17 @@ pub fn tangent(source: &str, x: f64) -> Result<Tangent, String> {
     let mut contractions = 0;
     let mut plateau_steps = 0;
     let mut persistent_disagreement = false;
-    let mut reliable_slope = None;
+    let mut best_estimate: Option<(f64, f64)> = None;
     for _ in 0..12 {
-        reliable_slope = None;
         if let (Some(a), Some(b)) = (value(x - h), value(x + h)) {
             let left = (y - a) / h;
             let right = (b - y) / h;
             // A scale-based allowance for cancellation in function differences.
             // This is a noise heuristic, not a bound on arbitrary expression error.
-            let noise = (8.0 * f64::EPSILON) * a.abs().max(b.abs()).max(y.abs()) / h;
+            let function_scale = a.abs().max(b.abs()).max(y.abs());
+            // Representing x±h perturbs the input, even when f(x) is zero.
+            let input_effect = x.abs().max(h) * left.abs().max(right.abs());
+            let noise = (8.0 * f64::EPSILON) * (function_scale / h + input_effect / h);
             if let Some((old_left, old_right, old_noise)) = previous_sides {
                 // Extrapolate each side separately to remove leading O(h)
                 // curvature error without cancelling a corner's slope jump.
@@ -57,7 +59,10 @@ pub fn tangent(source: &str, x: f64) -> Result<Tangent, String> {
                             && (slope - old_slope).abs() <= tolerance
                             && (within_noise || contractions >= 2)
                         {
-                            reliable_slope = Some(slope);
+                            let uncertainty = gap + allowance + (slope - old_slope).abs();
+                            if best_estimate.is_none_or(|(_, best)| uncertainty < best) {
+                                best_estimate = Some((slope, uncertainty));
+                            }
                         }
                     }
                     previous_estimate = Some((slope, gap, allowance));
@@ -77,8 +82,9 @@ pub fn tangent(source: &str, x: f64) -> Result<Tangent, String> {
         h *= 0.5;
     }
     // Inspect the entire bounded refinement sequence: a small early gap is not
-    // evidence of convergence, and later noise must not erase a resolved plateau.
-    if !persistent_disagreement && let Some(slope) = reliable_slope {
+    // evidence of convergence. Later roundoff must neither erase a resolved
+    // plateau nor discard a useful earlier estimate of a smooth derivative.
+    if !persistent_disagreement && let Some((slope, _)) = best_estimate {
         return Ok(Tangent { x, y, slope });
     }
     Err("No reliable finite slope: domain boundary, corner, discontinuity, or numerical instability.".into())
@@ -109,6 +115,30 @@ impl Tangent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn smooth_zero_crossings_survive_late_roundoff() {
+        for (source, x, expected) in [
+            ("ln(x)", 1.0, 1.0_f64),
+            ("ln(x)", 0.9999, 1.0 / 0.9999),
+            ("ln(x)", 1.0001, 1.0 / 1.0001),
+            ("ln(x+1)", 0.0, 1.0),
+            ("sin(x)", std::f64::consts::PI, -1.0),
+            ("sin(x-1)", 1.0, 1.0),
+            ("x^3", 0.0, 0.0),
+            ("0.000000000001*ln(x)", 1.0, 1e-12),
+        ] {
+            let result = tangent(source, x).unwrap_or_else(|e| panic!("{source} at {x}: {e}"));
+            let tolerance = if expected == 0.0 {
+                1e-8
+            } else {
+                1e-6 * expected.abs()
+            };
+            assert!(
+                (result.slope - expected).abs() < tolerance,
+                "{source} at {x}: {result:?}"
+            );
+        }
+    }
     #[test]
     fn scaled_corners_retain_persistent_one_sided_disagreement() {
         for scale in [1e-12, 1e-8, 1e-5, 1.0, 1e6] {
