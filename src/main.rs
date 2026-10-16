@@ -1,3 +1,6 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
+mod startup;
 mod view;
 
 use eframe::egui;
@@ -361,7 +364,25 @@ impl eframe::App for Playground {
     }
 }
 
-fn main() -> eframe::Result {
+fn main() -> std::process::ExitCode {
+    let simulate_error = std::env::args_os()
+        .skip(1)
+        .any(|arg| arg == "--simulate-startup-error");
+    match run(simulate_error) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            startup::report(&error.to_string());
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run(simulate_error: bool) -> eframe::Result {
+    if simulate_error {
+        return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
+            "Simulated startup failure requested with --simulate-startup-error. Remove this option to start normally.",
+        ))));
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1150.0, 760.0])
@@ -384,6 +405,13 @@ fn main() -> eframe::Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn simulated_startup_failure_returns_before_window_creation() {
+        let error = run(true).unwrap_err().to_string();
+        assert!(error.contains("Simulated startup failure"));
+        assert!(error.contains("--simulate-startup-error"));
+    }
 
     #[test]
     fn all_scene_types_generate_finite_headless_ui_shapes() {
