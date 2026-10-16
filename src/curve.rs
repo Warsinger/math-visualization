@@ -81,8 +81,16 @@ pub fn grid_cells(settings: CurveSampling) -> usize {
 }
 
 fn contour(source: &str, settings: CurveSampling) -> Result<Geometry, String> {
-    let s = settings.validate()?;
     let equation = Equation::planar(source)?;
+    contour_field(settings, |point| equation.evaluate(point.map(f64::from)))
+}
+
+/// Shared bounded planar contour kernel, also used by Cartesian surface slices.
+pub fn contour_field(
+    settings: CurveSampling,
+    evaluate: impl Fn(Point) -> Option<f64>,
+) -> Result<Geometry, String> {
+    let s = settings.validate()?;
     let n = grid_cells(s);
     let side = n + 1;
     let mut points = Vec::with_capacity(side * side);
@@ -95,8 +103,11 @@ fn contour(source: &str, settings: CurveSampling) -> Result<Geometry, String> {
                 0.0,
             ];
             points.push(p);
-            values.push(equation.evaluate(p.map(f64::from)));
+            values.push(evaluate(p).filter(|v| v.is_finite()));
         }
+    }
+    if values.iter().all(|v| *v == Some(0.0)) {
+        return Err("All sampled values are zero; the intersection may fill the plane or be unresolved, rather than a unique curve.".into());
     }
     let mut geometry = Geometry {
         bound: s.extent[0].hypot(s.extent[1]),

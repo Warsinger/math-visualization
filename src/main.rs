@@ -30,6 +30,11 @@ struct Playground {
     area_enabled: bool,
     area_bounds: [f64; 2],
     area_cache: math_playground::integral::Cache,
+
+    slice_enabled: bool,
+    slice_axis: usize,
+    slice_position: f32,
+    slice_cache: math_playground::slice::Cache,
 }
 
 impl Default for Playground {
@@ -51,6 +56,11 @@ impl Default for Playground {
             area_enabled: false,
             area_bounds: [-1.0, 1.0],
             area_cache: Default::default(),
+
+            slice_enabled: false,
+            slice_axis: 2,
+            slice_position: 0.0,
+            slice_cache: Default::default(),
         }
     }
 }
@@ -342,6 +352,7 @@ impl Playground {
                             }
                         } else if let Some(surface) = &self.scene.surface {
                             let source = surface.source.clone();
+                            let applied_sampling = surface.sampling;
                             ui.heading("Selected · Implicit surface");
                             for (axis, extent) in ["X", "Y", "Z"].into_iter().zip(&mut self.sampling.extent) {
                                 ui.add(egui::Slider::new(extent, 0.1..=10.0).text(format!("{axis} ±")));
@@ -352,6 +363,23 @@ impl Playground {
                                 let sampling = self.sampling;
                                 self.pending_history_request=Some(format!("plot {source}"));
                                 self.start(move |scene| scene.plot(&source, sampling));
+                            }
+                            ui.checkbox(&mut self.slice_enabled, "Explore cross-section");
+                            if self.slice_enabled {
+                                ui.horizontal(|ui| {
+                                    for (axis, label) in ["X", "Y", "Z"].into_iter().enumerate() {
+                                        ui.selectable_value(&mut self.slice_axis, axis, label);
+                                    }
+                                });
+                                let extent = applied_sampling.extent[self.slice_axis];
+                                self.slice_position = self.slice_position.clamp(-extent, extent);
+                                ui.add(egui::Slider::new(&mut self.slice_position, -extent..=extent).text("Plane position"));
+                                let current_source = self.scene.surface.as_ref().unwrap().source.clone();
+                                match self.slice_cache.get(&current_source, applied_sampling, self.slice_axis, self.slice_position) {
+                                    Ok(slice) => { ui.label(format!("{} intersection segments; {} undefined regions", slice.geometry.lines.len(), slice.geometry.skipped_tetrahedra)); }
+                                    Err(error) => { ui.label(error); }
+                                }
+                                ui.small("Yellow: numerical intersection. Empty may mean missed/degenerate features. No depth occlusion.");
                             }
                         } else {
                             ui.heading("Selected object · Helix");
@@ -388,7 +416,10 @@ impl Playground {
                 let area=if self.area_enabled {
                     self.scene.curve.as_ref().and_then(|curve|self.area_cache.get(&curve.source,self.area_bounds[0],self.area_bounds[1]).as_ref().ok())
                 } else {None};
-                let output=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling), tangent_source, area);
+                let slice = if self.slice_enabled {
+                    self.scene.surface.as_ref().and_then(|surface| self.slice_cache.get(&surface.source, surface.sampling, self.slice_axis, self.slice_position).as_ref().ok())
+                } else { None };
+                let output=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling), view::Overlays {tangent_source,area,slice});
                 canvas_rect=output.rect;
                 inspected_point=output.selected;
                 tangent=output.tangent;
@@ -522,6 +553,8 @@ mod tests {
         let mut app = Playground {
             tangent_enabled: true,
             area_enabled: true,
+
+            slice_enabled: true,
             ..Default::default()
         };
         for (request, mode) in [
@@ -631,6 +664,8 @@ mod tests {
                     history_open: true,
                     tangent_enabled: true,
                     area_enabled: true,
+
+                    slice_enabled: true,
                     ..Default::default()
                 };
                 if mode == PlotMode::TwoD {
@@ -638,6 +673,10 @@ mod tests {
                         .plot_curve("x^2", CurveSampling::default())
                         .unwrap();
                     app.plot_mode = mode;
+                } else {
+                    app.scene
+                        .plot("x^2+y^2+z^2=1", Sampling::default())
+                        .unwrap();
                 }
                 let ctx = egui::Context::default();
                 let input = || egui::RawInput {

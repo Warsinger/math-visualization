@@ -7,3 +7,4 @@ pub mod geometry;
 pub mod history;
 pub mod integral;
 pub mod scene;
+pub mod slice;
