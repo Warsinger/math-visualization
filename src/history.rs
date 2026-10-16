@@ -5,12 +5,13 @@ use crate::{
     scene::{Helix, Scene},
 };
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+#[cfg(not(target_arch = "wasm32"))]
 use std::{
     fs,
     io::{Read, Write},
-    path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
 };
+use web_time::{SystemTime, UNIX_EPOCH};
 
 pub const MAX_ENTRIES: usize = 200;
 const MAX_FILE_BYTES: u64 = 2_000_000;
@@ -165,11 +166,22 @@ pub struct Store {
     blocked: bool,
 }
 impl Store {
+    /// In-memory history, with no filesystem access or persistence warnings.
+    pub fn session() -> Self {
+        Self {
+            path: None,
+            history: History::default(),
+            warning: None,
+            blocked: true,
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn local() -> Self {
         let path = directories::BaseDirs::new()
             .map(|d| d.data_local_dir().join("MathPlayground/history.json"));
         Self::open(path)
     }
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn open(path: Option<PathBuf>) -> Self {
         let mut store = Self {
             path,
@@ -186,6 +198,7 @@ impl Store {
         }
         store
     }
+    #[cfg(not(target_arch = "wasm32"))]
     fn load(&mut self) -> Result<(), String> {
         let path = self
             .path
@@ -211,6 +224,11 @@ impl Store {
         self.history.entries.clear();
         self.persist();
     }
+    #[cfg(target_arch = "wasm32")]
+    fn persist(&mut self) {
+        debug_assert!(self.blocked, "Browser stores must be session-only");
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     fn persist(&mut self) {
         if self.blocked {
             return;
@@ -220,6 +238,7 @@ impl Store {
             .err()
             .map(|e| format!("History is available in this session but could not be saved: {e}"));
     }
+    #[cfg(not(target_arch = "wasm32"))]
     fn save(&self) -> Result<(), String> {
         let path = self.path.as_ref().ok_or("No history path.")?;
         let parent = path.parent().ok_or("Invalid history path.")?;
@@ -233,9 +252,27 @@ impl Store {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    #[test]
+    fn session_history_records_and_clears_without_a_storage_path_or_warning() {
+        let mut store = Store::session();
+        store.record(
+            "plot cbrt(x)".into(),
+            Outcome::Success {
+                snapshot: Snapshot::Curve {
+                    equation: "cbrt(x)".into(),
+                    sampling: crate::curve::CurveSampling::default(),
+                },
+            },
+        );
+        assert_eq!(store.history.entries.len(), 1);
+        assert!(store.history.entries[0].timestamp > 0);
+        assert!(store.path.is_none() && store.warning.is_none());
+        store.clear();
+        assert!(store.history.entries.is_empty() && store.warning.is_none());
+    }
     #[test]
     fn snapshots_restore_context_dependent_commands_and_sampling() {
         let mut scene = Scene::default();

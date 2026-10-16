@@ -1164,6 +1164,10 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
  "windows-sys 0.61.2",
 ]
 

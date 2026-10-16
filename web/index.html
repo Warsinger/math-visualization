@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mathematical playground — local browser</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; background: #0f1622; color: #dce5ef; font: 13px system-ui, sans-serif; }
+    body { display: flex; flex-direction: column; min-width: 950px; min-height: 790px; }
+    #status { margin: 0; padding: 6px 12px; min-height: 18px; background: #182132; }
+    #playground { display: block; width: 100%; flex: 1; min-height: 760px; touch-action: none; }
+  </style>
+</head>
+<body>
+  <p id="status" role="status">Loading local browser app…</p>
+  <canvas id="playground" aria-label="Mathematical playground"></canvas>
+  <noscript>JavaScript and WebAssembly are required to run the playground.</noscript>
+  <script type="module">
+    const status = document.getElementById('status');
+    const failed = error => {
+      status.textContent = 'App failed to start or stopped unexpectedly. See browser developer console for details; reload to retry.';
+      console.error(error);
+    };
+    window.addEventListener('error', event => failed(event.error || event.message));
+    window.addEventListener('unhandledrejection', event => failed(event.reason));
+    try {
+      const { default: init } = await import('./math_playground.js');
+      await init();
+    } catch (error) { failed(error); }
+  </script>
+</body>
+</html>
