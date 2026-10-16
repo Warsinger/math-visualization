@@ -10,6 +10,53 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  coverage:
+    name: Coverage (Linux debug)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUST_BACKTRACE: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install Linux build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libgl1-mesa-dev
+      - name: Install coverage tools
+        run: |
+          rustup toolchain install stable --profile minimal --component llvm-tools-preview
+          rustup override set stable
+          cargo install cargo-llvm-cov --version 0.9.1 --locked --root "$RUNNER_TEMP/coverage-tools"
+          echo "$RUNNER_TEMP/coverage-tools/bin" >> "$GITHUB_PATH"
+      - name: Restore instrumented dependency cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-debug-coverage
+          workspaces: ". -> target/llvm-cov-target"
+          cache-bin: "false"
+      - name: Run instrumented tests once
+        run: cargo llvm-cov --locked --all-targets --target x86_64-unknown-linux-gnu --no-report
+      - name: Generate reports from the same test run
+        run: |
+          mkdir -p dist/coverage
+          cargo llvm-cov report --target x86_64-unknown-linux-gnu --ignore-filename-regex '(^|/)(tests|target)/' --html --output-dir dist/coverage
+          cargo llvm-cov report --target x86_64-unknown-linux-gnu --ignore-filename-regex '(^|/)(tests|target)/' --lcov --output-path dist/coverage/lcov.info
+          cargo llvm-cov report --target x86_64-unknown-linux-gnu --ignore-filename-regex '(^|/)(tests|target)/' --json --output-path dist/coverage/coverage.json
+          python3 scripts/coverage-summary.py dist/coverage/coverage.json >> "$GITHUB_STEP_SUMMARY"
+          test -s dist/coverage/html/index.html
+          test -s dist/coverage/lcov.info
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-linux-debug
+          path: dist/coverage/
+          if-no-files-found: error
+          retention-days: 14
   formatting:
     name: Formatting
     runs-on: ubuntu-24.04
