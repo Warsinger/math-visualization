@@ -20,6 +20,6 @@ A working graphics driver is required on every platform. Automated CI tests incl
 
 ## Build pipeline
 
-Pushes, pull requests, and manual workflow dispatch run formatting, strict Clippy, tests, and an optimized release build on each native runner. Packaging verifies exact archive contents and writes a SHA-256 checksum before uploading. A failed platform does not cancel the other platform jobs; only verified packages are uploaded by that job. This scope covers downloadable CI artifacts. Release publishing, signing, installers, browser/WebAssembly builds, and hosting remain separate work.
+Pushes to main, pull requests, and manual workflow dispatch run formatting, strict Clippy, tests, and an optimized release build on each native runner. Branch pushes use the PR event to avoid duplicate builds. Packaging verifies exact archive contents and writes a SHA-256 checksum before uploading. A failed platform does not cancel the other platform jobs; only verified packages are uploaded by that job. This scope covers downloadable CI artifacts. Release publishing, signing, installers, browser/WebAssembly builds, and hosting remain separate work.
 
 The workflow uses checkout v6 and upload-artifact v6, which run on Node.js 24, addressing the previous checkout v4 Node.js 20 deprecation warning.
