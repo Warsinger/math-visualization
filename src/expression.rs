@@ -72,6 +72,22 @@ pub struct Equation {
 }
 
 impl Equation {
+    pub fn references_z(source: &str) -> Result<bool, String> {
+        Ok(Self::parse_impl(source, false)?.root.uses_variable(2))
+    }
+    pub fn planar(source: &str) -> Result<Self, String> {
+        let mut equation = Self::parse_impl(source, false)?;
+        if equation.root.uses_variable(2) {
+            return Err("2D equations may use x and y, but not z.".into());
+        }
+        if !source.contains('=') && !equation.root.uses_variable(1) {
+            equation.root = Expr::Binary('-', Box::new(equation.root), Box::new(Expr::Variable(1)));
+        }
+        if !equation.root.has_variable() {
+            return Err("A planar equation must describe a curve in x/y.".into());
+        }
+        Ok(equation)
+    }
     pub fn parse(source: &str) -> Result<Self, String> {
         Self::parse_impl(source, true)
     }

@@ -49,7 +49,7 @@ impl Snapshot {
     fn validate(&self) -> Result<(), String> {
         match self {
             Self::Curve { equation, sampling } => {
-                Equation::explicit_y(equation)?;
+                Equation::planar(equation)?;
                 sampling.validate()?;
             }
             Self::Helix { helix } => {

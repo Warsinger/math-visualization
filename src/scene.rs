@@ -8,8 +8,9 @@ use std::f32::consts::TAU;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PlotMode {
-    TwoD,
     #[default]
+    Auto,
+    TwoD,
     ThreeD,
 }
 
@@ -142,6 +143,25 @@ impl Scene {
     }
     pub fn request_in_mode(&mut self, text: &str, mode: PlotMode) -> Result<(), String> {
         let text = text.trim();
+        if mode == PlotMode::ThreeD
+            && !text.starts_with("plot ")
+            && !text.to_lowercase().starts_with("create ")
+            && !text.starts_with("set ")
+        {
+            return self.request_in_mode(&format!("plot {text}"), mode);
+        }
+        if mode == PlotMode::Auto
+            && !text.to_lowercase().starts_with("create ")
+            && !text.starts_with("set ")
+        {
+            let source = text.strip_prefix("plot ").unwrap_or(text).trim();
+            let mode = if Equation::references_z(source)? {
+                PlotMode::ThreeD
+            } else {
+                PlotMode::TwoD
+            };
+            return self.request_in_mode(&format!("plot {source}"), mode);
+        }
         if mode == PlotMode::TwoD
             && !text.to_lowercase().starts_with("create ")
             && !text.starts_with("set ")

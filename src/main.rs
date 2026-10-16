@@ -38,13 +38,22 @@ impl Default for Playground {
             history: Store::open(None),
             history_open: false,
             pending_history_request: None,
-            plot_mode: PlotMode::ThreeD,
+            plot_mode: PlotMode::Auto,
             curve_sampling: CurveSampling::default(),
         }
     }
 }
 
 impl Playground {
+    fn restore_snapshot(&mut self, snapshot: Snapshot) {
+        self.plot_mode = if matches!(snapshot, Snapshot::Curve { .. }) {
+            PlotMode::TwoD
+        } else {
+            PlotMode::ThreeD
+        };
+        self.request = snapshot.request();
+        self.start(move |scene| snapshot.restore(scene));
+    }
     fn start(&mut self, work: impl FnOnce(&mut Scene) -> Result<(), String> + Send + 'static) {
         let mut candidate = self.scene.clone();
         let (tx, rx) = mpsc::channel();
@@ -64,18 +73,20 @@ impl Playground {
                 match result {
                     Ok(scene) => {
                         self.scene = scene;
-                        self.plot_mode = if self.scene.curve.is_some() {
-                            PlotMode::TwoD
-                        } else {
-                            PlotMode::ThreeD
-                        };
+                        if self.plot_mode != PlotMode::Auto {
+                            self.plot_mode = if self.scene.curve.is_some() {
+                                PlotMode::TwoD
+                            } else {
+                                PlotMode::ThreeD
+                            };
+                        }
                         if let Some(c) = &self.scene.curve {
                             self.curve_sampling = c.sampling;
                         }
                         self.error = false;
                         self.feedback = if self.scene.curve.is_some() {
                             format!(
-                                "2D plot: {} segments; {} intervals skipped. Empty output does not prove no real values exist.",
+                                "2D plot: {} segments; {} sampling regions skipped. Empty output does not prove no real values exist.",
                                 self.scene.geometry.lines.len(),
                                 self.scene.geometry.skipped_tetrahedra
                             )
@@ -212,8 +223,7 @@ impl Playground {
             self.request = request;
         }
         if let Some(snapshot) = restore {
-            self.request = snapshot.request();
-            self.start(move |scene| snapshot.restore(scene));
+            self.restore_snapshot(snapshot);
         }
         Some(panel.response.rect)
     }
@@ -234,10 +244,11 @@ impl Playground {
             ui.add_enabled_ui(self.pending.is_none(),|ui| {
                 ui.horizontal(|ui| {
                     ui.label("Input mode:");
-                    ui.selectable_value(&mut self.plot_mode,PlotMode::TwoD,"2D · y=f(x)");
+                    ui.selectable_value(&mut self.plot_mode,PlotMode::Auto,"Auto");
+                    ui.selectable_value(&mut self.plot_mode,PlotMode::TwoD,"2D · XY");
                     ui.selectable_value(&mut self.plot_mode,PlotMode::ThreeD,"3D · implicit");
                 });
-                ui.small("Mode applies to the next plot request. 2D: x^2 (or plot x^2) means y=x^2. 3D: plot F means F=0. Helices are always 3D.");
+                ui.small("Auto: equations with z → 3D; otherwise → 2D. Bare x^2 → y=x^2. Overrides apply on the next request. Helices are 3D.");
             });
             ui.separator();
             ui.add_enabled_ui(self.pending.is_none(), |ui| {
@@ -281,7 +292,7 @@ impl Playground {
                                 ui.add(egui::Slider::new(extent,0.1..=20.0).text(axis));
                             }
                             ui.add(egui::Slider::new(&mut self.curve_sampling.samples,64..=4096).text("Samples"));
-                            ui.label("X is sampled; Y clips the view. Apply sampling to rebuild.");
+                            ui.label(format!("Apply sampling to rebuild. Explicit functions use sample intervals; implicit curves use a {}×{} grid.",math_playground::curve::grid_cells(self.curve_sampling),math_playground::curve::grid_cells(self.curve_sampling)));
                             if ui.button("Apply sampling").clicked() {
                                 let settings=self.curve_sampling;
                                 self.pending_history_request=Some(format!("plot {source}"));
@@ -329,7 +340,7 @@ impl Playground {
             });
             ui.separator();
             if let Some(curve)=&self.scene.curve {
-                ui.label(format!("2D y=f(x): {}",curve.source));
+                ui.label(format!("2D Cartesian: {}",curve.source));
                 ui.label("Uniform numerical samples; undefined/sharp intervals may be skipped, and discontinuities can still mislead.");
             } else if let Some(surface) = &self.scene.surface {
                 ui.label(format!("Equation: {}", surface.source));
@@ -530,7 +541,7 @@ mod tests {
             equation: "x^2".into(),
             sampling,
         };
-        app.start(move |scene| snapshot.restore(scene));
+        app.restore_snapshot(snapshot);
         let result = app
             .pending
             .take()

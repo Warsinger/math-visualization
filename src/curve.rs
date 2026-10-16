@@ -1,4 +1,4 @@
-//! Explicit y=f(x) sampling in the XY plane, with bounded work and clipping.
+//! Bounded explicit-function sampling and implicit planar contour extraction.
 use crate::{
     expression::Equation,
     geometry::{Geometry, Point},
@@ -35,6 +35,9 @@ impl CurveSampling {
 }
 
 pub fn sample(source: &str, settings: CurveSampling) -> Result<Geometry, String> {
+    if Equation::explicit_y(source).is_err() {
+        return contour(source, settings);
+    }
     let s = settings.validate()?;
     let equation = Equation::explicit_y(source)?;
     let mut geometry = Geometry {
@@ -69,6 +72,67 @@ pub fn sample(source: &str, settings: CurveSampling) -> Result<Geometry, String>
             geometry.skipped_tetrahedra += 1;
         }
         previous = current;
+    }
+    Ok(geometry)
+}
+
+pub fn grid_cells(settings: CurveSampling) -> usize {
+    ((settings.samples as f64).sqrt() as usize * 2).clamp(16, 128)
+}
+
+fn contour(source: &str, settings: CurveSampling) -> Result<Geometry, String> {
+    let s = settings.validate()?;
+    let equation = Equation::planar(source)?;
+    let n = grid_cells(s);
+    let side = n + 1;
+    let mut points = Vec::with_capacity(side * side);
+    let mut values = Vec::with_capacity(side * side);
+    for y in 0..=n {
+        for x in 0..=n {
+            let p = [
+                (x as f32 / n as f32 * 2.0 - 1.0) * s.extent[0],
+                (y as f32 / n as f32 * 2.0 - 1.0) * s.extent[1],
+                0.0,
+            ];
+            points.push(p);
+            values.push(equation.evaluate(p.map(f64::from)));
+        }
+    }
+    let mut geometry = Geometry {
+        bound: s.extent[0].hypot(s.extent[1]),
+        ..Default::default()
+    };
+    for y in 0..n {
+        for x in 0..n {
+            let a = y * side + x;
+            let b = a + 1;
+            let c = a + side;
+            let d = c + 1;
+            for triangle in [[a, b, d], [a, d, c]] {
+                let Some(v) = triangle
+                    .iter()
+                    .map(|&i| values[i])
+                    .collect::<Option<Vec<_>>>()
+                else {
+                    geometry.skipped_tetrahedra += 1;
+                    continue;
+                };
+                let mut intersections = Vec::with_capacity(2);
+                for (i, j) in [(0, 1), (1, 2), (2, 0)] {
+                    if (v[i] < 0.0) == (v[j] < 0.0) {
+                        continue;
+                    }
+                    let scale = v[i].abs().max(v[j].abs());
+                    let t = ((v[i] / scale) / (v[i] / scale - v[j] / scale)) as f32;
+                    let (p, q) = (points[triangle[i]], points[triangle[j]]);
+                    let p = std::array::from_fn(|k| p[k] + t * (q[k] - p[k]));
+                    intersections.push(p);
+                }
+                if intersections.len() == 2 && intersections[0] != intersections[1] {
+                    geometry.lines.push([intersections[0], intersections[1]]);
+                }
+            }
+        }
     }
     Ok(geometry)
 }
@@ -143,7 +207,7 @@ mod tests {
                 .all(|p| p[1] == 4.0)
         );
         assert!(sample("y=100", s).unwrap().lines.is_empty());
-        for source in ["x^2+y^2=1", "y=z", "y=y+x", "x=0", "y=x=0"] {
+        for source in ["y=z", "x+z=0", "y=x=0"] {
             assert!(sample(source, s).is_err(), "{source}");
         }
         assert!(sample("x", CurveSampling { samples: 4097, ..s }).is_err());
@@ -156,6 +220,40 @@ mod tests {
                 }
             )
             .is_err()
+        );
+    }
+    #[test]
+    fn implicit_circle_ellipse_vertical_line_and_refinement() {
+        for source in ["x^2+y^2=1", "x^2/4+y^2=1", "x=0.3", "x*y=1"] {
+            let g = sample(source, CurveSampling::default()).unwrap();
+            assert!(!g.lines.is_empty(), "{source}");
+            let equation = Equation::planar(source).unwrap();
+            for p in g.lines.iter().flatten() {
+                assert_eq!(p[2], 0.0);
+                assert!(equation.evaluate(p.map(f64::from)).unwrap().abs() < 0.03);
+            }
+        }
+        let residual = |samples| {
+            sample(
+                "x^2+y^2=1",
+                CurveSampling {
+                    samples,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .lines
+            .iter()
+            .flatten()
+            .map(|p| (p[0] * p[0] + p[1] * p[1] - 1.0).abs())
+            .fold(0.0_f32, f32::max)
+        };
+        assert!(residual(4096) < residual(64));
+        assert!(
+            sample("x^2+y^2+1=0", CurveSampling::default())
+                .unwrap()
+                .lines
+                .is_empty()
         );
     }
 }

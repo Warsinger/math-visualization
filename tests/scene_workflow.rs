@@ -4,6 +4,39 @@ use math_playground::{
 };
 
 #[test]
+fn automatic_dimension_selection_and_implicit_history() {
+    use math_playground::{
+        history::{History, Outcome, Snapshot},
+        scene::PlotMode,
+    };
+    let mut scene = Scene::default();
+    for source in ["x^2+y^2=1", "x=2", "plot sin(x)+cos(y)=0", "y=x^2", "x^2"] {
+        scene.request_in_mode(source, PlotMode::Auto).unwrap();
+        assert!(scene.curve.is_some(), "{source}");
+    }
+    scene.request_in_mode("x^2+y^2=1", PlotMode::Auto).unwrap();
+    let saved = Snapshot::capture(&scene);
+    let mut history = History::default();
+    history.record("circle".into(), Outcome::Success { snapshot: saved });
+    let loaded = History::decode(&serde_json::to_vec(&history).unwrap()).unwrap();
+    scene
+        .request_in_mode("x^2+y^2+z^2=1", PlotMode::Auto)
+        .unwrap();
+    assert!(scene.surface.is_some());
+    scene
+        .request_in_mode("plot y=x^2", PlotMode::ThreeD)
+        .unwrap();
+    assert!(scene.surface.is_some());
+    if let Outcome::Success { snapshot } = &loaded.entries[0].outcome {
+        snapshot.restore(&mut scene).unwrap();
+    } else {
+        panic!("expected saved circle")
+    }
+    assert!(scene.curve.is_some());
+    assert!(!scene.geometry.lines.is_empty());
+}
+
+#[test]
 fn explicit_plot_mode_keeps_2d_and_3d_meanings_separate_and_history_restores_them() {
     use math_playground::{
         curve::CurveSampling,
@@ -51,7 +84,7 @@ fn explicit_plot_mode_keeps_2d_and_3d_meanings_separate_and_history_restores_the
     let before = scene.geometry.lines.clone();
     assert!(
         scene
-            .request_in_mode("plot x^2+y^2=1", PlotMode::TwoD)
+            .request_in_mode("plot x^2+z^2=1", PlotMode::TwoD)
             .is_err()
     );
     assert_eq!(scene.geometry.lines, before);
