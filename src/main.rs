@@ -248,7 +248,7 @@ impl Playground {
                     ui.selectable_value(&mut self.plot_mode,PlotMode::TwoD,"2D · XY");
                     ui.selectable_value(&mut self.plot_mode,PlotMode::ThreeD,"3D · implicit");
                 });
-                ui.small("Auto: equations with z → 3D; otherwise → 2D. Bare x^2 → y=x^2. Overrides apply on the next request. Helices are 3D.");
+                ui.small("Auto: equations with z use 3D; otherwise 2D. Bare x^2 means y=x^2. Overrides apply on the next request. Helices are 3D.");
             });
             ui.separator();
             ui.add_enabled_ui(self.pending.is_none(), |ui| {
