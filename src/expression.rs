@@ -204,6 +204,7 @@ impl Parser<'_> {
                     "x" => Expr::Variable(0),
                     "y" => Expr::Variable(1),
                     "z" => Expr::Variable(2),
+                    "e" => Expr::Number(std::f64::consts::E),
                     "ln" | "sin" | "cos" | "tan" => {
                         let function = match name {
                             "ln" => Function::Ln,
@@ -226,7 +227,7 @@ impl Parser<'_> {
                     }
                     _ => {
                         return Err(format!(
-                            "Unknown name '{name}'. Use x/y/z, pi/π, or ln/sin/cos/tan."
+                            "Unknown name '{name}'. Use x/y/z, pi/π/e, or ln/sin/cos/tan."
                         ));
                     }
                 }
@@ -387,6 +388,30 @@ mod tests {
         assert_eq!(eval("(x+y)*z/2 = 6", [1.0, 2.0, 4.0]), 0.0);
         assert_eq!(eval("x^2-y^2-z^2=0", [5.0, 3.0, 4.0]), 0.0);
         assert_eq!(eval("x + 1e-2", [1.0, 0.0, 0.0]), 1.01);
+    }
+    #[test]
+    fn euler_constant_preserves_scientific_notation_and_token_boundaries() {
+        let eval = |s| {
+            Equation::explicit_y(s)
+                .unwrap()
+                .evaluate([2.0, 0.0, 0.0])
+                .unwrap()
+        };
+        assert_eq!(eval("e"), std::f64::consts::E);
+        assert!((eval("ln(e)") - 1.0).abs() < 1e-12);
+        assert_eq!(eval("e^x"), std::f64::consts::E.powi(2));
+        assert_eq!(eval("-e^2"), -std::f64::consts::E.powi(2));
+        assert_eq!(eval("1e-2+1E+2+e"), 100.01 + std::f64::consts::E);
+        assert_eq!(
+            Equation::parse("x=e")
+                .unwrap()
+                .evaluate([std::f64::consts::E, 0.0, 0.0]),
+            Some(0.0)
+        );
+        assert!(Equation::parse("e").is_err());
+        for source in ["E", "ee", "ex", "2e", "e(x)", "1e-", "1e999"] {
+            assert!(Equation::explicit_y(source).is_err(), "{source}");
+        }
     }
     #[test]
     fn rejects_unknown_code_and_malformed_input() {
