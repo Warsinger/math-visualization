@@ -4,6 +4,8 @@ Target: **https://math-playground-3mq.pages.dev/**, Direct Upload project `math-
 
 Uses free Pages static hosting and the repository's GitHub Actions allowance. No Functions, storage, custom domain, paid plan or Cloudflare Git build is needed. Account/Actions usage limits still apply. See [Pages limits](https://developers.cloudflare.com/pages/platform/limits/) and [Direct Upload CI](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/).
 
+**FREE is a requirement:** deployment and ongoing operation must remain within included allowances. Do not enable paid plans, metered overage billing or domain purchases. Report a blocking free-tier limit and agree on a free alternative; paid options require separate explicit approval.
+
 ## Access setup
 
 1. Create a Cloudflare custom account API token with **Cloudflare Pages: Edit** only in the hosting account. Avoid global keys and unrelated DNS, billing or Workers permissions. This permission manages Pages projects in that account; it is not limited to this GitHub repository. Choose an expiration and rotate before it expires.
@@ -12,6 +14,8 @@ Uses free Pages static hosting and the repository's GitHub Actions allowance. No
 4. Run **Rust checks → Run workflow** on the chosen branch with **deploy** enabled. A successful upload verifies the actual token, account and project access. Dashboard sign-in alone does not validate CI credentials.
 
 The builder GitHub App has no secrets administration permission; the owner installs/rotates secrets directly. The workflow uses a read-only GitHub token and exposes Cloudflare credentials only to its deployment job. PR runs never deploy or receive those credentials.
+
+The owner set the initial token to expire after **one year**. Rotate the GitHub secret before that expiration using the procedure below; an expired token prevents future deployments but does not remove an already published static site.
 
 ## Publishing
 
