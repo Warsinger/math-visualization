@@ -26,6 +26,7 @@ struct Playground {
     pending_history_request: Option<String>,
     plot_mode: PlotMode,
     curve_sampling: CurveSampling,
+    tangent_enabled: bool,
 }
 
 impl Default for Playground {
@@ -43,6 +44,7 @@ impl Default for Playground {
             pending_history_request: None,
             plot_mode: PlotMode::Auto,
             curve_sampling: CurveSampling::default(),
+            tangent_enabled: false,
         }
     }
 }
@@ -284,9 +286,10 @@ impl Playground {
                 ui.label("Sampling can miss thin features, singularities and even roots; discontinuities can mislead.");
             });
             ui.separator();
-            let canvas_height = (ui.available_height() - 190.0).max(120.0);
+            let canvas_height = (ui.available_height() - 210.0).max(120.0);
             let mut inspected_point = None;
             let mut inspection_equation = None;
+            let mut tangent = None;
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(255.0);
@@ -302,7 +305,15 @@ impl Playground {
                             if ui.button("Apply sampling").clicked() {
                                 let settings=self.curve_sampling;
                                 self.pending_history_request=Some(format!("plot {source}"));
+                                let source = source.clone();
                                 self.start(move |scene|scene.plot_curve(&source,settings));
+                            }
+                            ui.checkbox(&mut self.tangent_enabled, "Explore tangent");
+                            if self.tangent_enabled {
+                                if math_playground::expression::Equation::explicit_y(&source).is_ok() {
+                                    ui.label("Hover along the curve to explore the tangent at the inspected point.");
+                                    ui.small("One-sided finite differences; convergence is approximate, not symbolic proof.");
+                                } else { ui.label("Tangent exploration requires explicit y=f(x)."); }
                             }
                         } else if let Some(surface) = &self.scene.surface {
                             let source = surface.source.clone();
@@ -348,10 +359,21 @@ impl Playground {
                 } else if let Some(surface) = &self.scene.surface {
                     math_playground::expression::Equation::parse(&surface.source).ok()
                 } else { None };
-                (canvas_rect,inspected_point)=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling));
+                let tangent_source = if self.tangent_enabled { self.scene.curve.as_ref().map(|curve|curve.source.as_str()) } else { None };
+                let output=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling), tangent_source);
+                canvas_rect=output.rect;
+                inspected_point=output.selected;
+                tangent=output.tangent;
             });
-            ui.allocate_ui(egui::vec2(ui.available_width(), 65.0), |ui| {
+            ui.allocate_ui(egui::vec2(ui.available_width(), 85.0), |ui| {
                 view::inspection_readout(ui, inspected_point, inspection_equation.as_ref());
+                if self.tangent_enabled && self.scene.curve.is_some() {
+                    match &tangent {
+                        Some(Ok(value)) => { ui.label(format!("Numerical f'(x) ≈ {:.6} at the inspected x",value.slope)); }
+                        Some(Err(error)) => { ui.label(error); }
+                        None => { ui.label("Tangent: hover near the curve to select a point."); }
+                    }
+                }
             });
             ui.separator();
             if let Some(curve)=&self.scene.curve {
@@ -418,6 +440,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn tangent_controls_leave_bottom_inspection_visible_at_minimum_size() {
+        let mut app = Playground {
+            tangent_enabled: true,
+            history_open: true,
+            ..Default::default()
+        };
+        app.scene
+            .plot_curve("x^2", CurveSampling::default())
+            .unwrap();
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(950.0, 760.0),
+                )),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                app.draw(ui);
+            });
+            output.textures_delta.clear();
+            let text = output
+                .shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    egui::Shape::Text(t)
+                        if t.galley.job.text.contains("Approximate segment point;") =>
+                    {
+                        Some(t)
+                    }
+                    _ => None,
+                })
+                .expect("bottom inspection readout must remain visible");
+            assert!(
+                text.pos.y + text.galley.size().y <= 760.0,
+                "readout extends below window"
+            );
+        }
+    }
+
+    #[test]
     fn simulated_startup_failure_returns_before_window_creation() {
         let error = run(true).unwrap_err().to_string();
         assert!(error.contains("Simulated startup failure"));
@@ -426,7 +490,10 @@ mod tests {
 
     #[test]
     fn all_scene_types_generate_finite_headless_ui_shapes() {
-        let mut app = Playground::default();
+        let mut app = Playground {
+            tangent_enabled: true,
+            ..Default::default()
+        };
         for (request, mode) in [
             ("create a helix with five turns", PlotMode::ThreeD),
             ("plot x^2-y^2-z^2=0", PlotMode::ThreeD),
@@ -532,6 +599,7 @@ mod tests {
             for mode in [PlotMode::TwoD, PlotMode::ThreeD] {
                 let mut app = Playground {
                     history_open: true,
+                    tangent_enabled: true,
                     ..Default::default()
                 };
                 if mode == PlotMode::TwoD {
