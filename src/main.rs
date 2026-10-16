@@ -254,6 +254,7 @@ impl Playground {
             ui.add_enabled_ui(self.pending.is_none(), |ui| {
                 ui.horizontal(|ui| {
                     let response = ui.add(egui::TextEdit::singleline(&mut self.request)
+                        .font(egui::FontId::monospace(16.0))
                         .desired_width((ui.available_width() - 85.0).max(100.0))
                         .hint_text("plot x^2 - y^2 - z^2 = 0"));
                     let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
