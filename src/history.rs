@@ -18,6 +18,10 @@ const MAX_FILE_BYTES: u64 = 2_000_000;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Snapshot {
+    Curve {
+        equation: String,
+        sampling: crate::curve::CurveSampling,
+    },
     Helix {
         helix: Helix,
     },
@@ -28,6 +32,12 @@ pub enum Snapshot {
 }
 impl Snapshot {
     pub fn capture(scene: &Scene) -> Self {
+        if let Some(c) = &scene.curve {
+            return Self::Curve {
+                equation: c.source.clone(),
+                sampling: c.sampling,
+            };
+        }
         match &scene.surface {
             Some(s) => Self::Surface {
                 equation: s.source.clone(),
@@ -38,6 +48,10 @@ impl Snapshot {
     }
     fn validate(&self) -> Result<(), String> {
         match self {
+            Self::Curve { equation, sampling } => {
+                Equation::explicit_y(equation)?;
+                sampling.validate()?;
+            }
             Self::Helix { helix } => {
                 helix.validate()?;
             }
@@ -50,12 +64,14 @@ impl Snapshot {
     }
     pub fn restore(&self, scene: &mut Scene) -> Result<(), String> {
         match self {
+            Self::Curve { equation, sampling } => scene.plot_curve(equation, *sampling),
             Self::Helix { helix } => scene.replace(*helix),
             Self::Surface { equation, sampling } => scene.plot(equation, *sampling),
         }
     }
     pub fn request(&self) -> String {
         match self {
+            Self::Curve { equation, .. } => format!("plot {equation}"),
             Self::Helix { helix } => format!(
                 "create a helix with radius {} and height {} and turns {}",
                 helix.radius, helix.height, helix.turns

@@ -1,5 +1,13 @@
 # Mathematical playground — initial project specification
 
+## Implemented extension: explicit 2D Cartesian curves
+
+Issue #7 adds an explicit input selector: 2D y=f(x) versus the existing 3D implicit interpretation. The selector affects the next submitted plot, not the current scene until successful Apply. In 2D, bare `x^2`, `plot x^2`, `y=x^2` and `x^2=y` share the same explicit function sampler; constant functions are accepted. The function side uses x only; general implicit 2D equations and y/z-dependent expressions receive a clear error without mutating the scene. 3D still interprets F as F=0 and y=x^2 as a cylinder; creating a helix selects 3D.
+
+`src/curve.rs` produces world-space segments with z=0, reusing the arithmetic evaluator and independent Geometry representation. Applied settings comprise symmetric X/Y half-extents 0.1–20 and 64–4096 sample intervals (default extent ±5 and 1024). At most 8193 evaluations yield at most 4096 segments; non-real/nonfinite intervals are skipped, and vertical clipping uses finite interpolation. A midpoint-deviation heuristic rejects some discontinuity/sharp-feature bridges; continuity and full feature capture are not guaranteed. This is uniform explicit-function sampling, not an implicit 2D solver or adaptive algorithm.
+
+The renderer fixes an XY projection with equal unit scale, numbered grid/axes, drag pan, zoom and reset. Orbit/tilt remain exclusive to 3D. Geometry generation uses the existing worker/caching and atomic successful-scene replacement. History adds an explicit curve snapshot variant containing source/settings, preserves old variants, restores the plot mode/controls, and retains the distinction between input mode and displayed scene. Old app versions that cannot decode new curve entries use the existing warning/preserve-file fallback rather than overwriting history.
+
 ## Purpose
 
 Learn Rust and 3D visualization by building an approachable mathematical playground inspired by the curiosity of Numberphile curve and shape demonstrations. End users explore through typed requests and direct controls; they never need to write code. The developer learns the math and engineering underneath through small, testable milestones.

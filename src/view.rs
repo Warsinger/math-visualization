@@ -1,10 +1,12 @@
 use eframe::egui::{self, Color32, Pos2, Stroke};
+use math_playground::curve::CurveSampling;
 use math_playground::geometry::Geometry;
 
 pub struct Camera {
     pub yaw: f32,
     pub tilt: f32,
     pub zoom: f32,
+    pub pan: [f32; 2],
 }
 
 impl Default for Camera {
@@ -13,11 +15,15 @@ impl Default for Camera {
             yaw: 0.6,
             tilt: 0.35,
             zoom: 1.0,
+            pan: [0.0; 2],
         }
     }
 }
 
 impl Camera {
+    fn project_2d(&self, [x, y, _]: [f32; 3], center: Pos2, scale: f32) -> Pos2 {
+        center + egui::vec2(x + self.pan[0], -y - self.pan[1]) * scale
+    }
     /// Rotate around vertical Z, then tilt. Orthographic projection is deliberate.
     fn project(&self, [x, y, z]: [f32; 3], center: Pos2, scale: f32) -> Pos2 {
         let horizontal = x * self.yaw.cos() - y * self.yaw.sin();
@@ -32,6 +38,7 @@ pub fn canvas(
     geometry: &Geometry,
     camera: &mut Camera,
     height: f32,
+    curve: Option<CurveSampling>,
 ) -> egui::Rect {
     let (response, painter) = ui.allocate_painter(
         egui::vec2(ui.available_width().max(50.0), height),
@@ -39,7 +46,15 @@ pub fn canvas(
     );
     let rect = response.rect;
     painter.rect_filled(rect, 8.0, Color32::from_rgb(15, 22, 34));
-    if response.dragged() {
+    let base_scale = curve.map_or(
+        rect.width().min(rect.height()) * 0.40 / geometry.bound.max(0.1),
+        |s| (rect.width() / (2.0 * s.extent[0])).min(rect.height() / (2.0 * s.extent[1])) * 0.85,
+    );
+    if response.dragged() && curve.is_some() {
+        let delta = ui.input(|i| i.pointer.delta());
+        camera.pan[0] += delta.x / (base_scale * camera.zoom);
+        camera.pan[1] -= delta.y / (base_scale * camera.zoom);
+    } else if response.dragged() {
         // Per-frame pointer motion, not cumulative drag distance.
         let delta = ui.input(|i| i.pointer.delta());
         camera.yaw += delta.x * 0.01;
@@ -53,14 +68,65 @@ pub fn canvas(
     }
     // Bounding sphere keeps the initial view in frame at every rotation.
     let bound = geometry.bound.max(0.1);
-    let scale = rect.width().min(rect.height()) * 0.40 / bound * camera.zoom;
-    let project = |point| camera.project(point, rect.center(), scale);
+    let scale = base_scale * camera.zoom;
+    let project = |point| {
+        if curve.is_some() {
+            camera.project_2d(point, rect.center(), scale)
+        } else {
+            camera.project(point, rect.center(), scale)
+        }
+    };
+    if let Some(settings) = curve {
+        for i in -5..=5 {
+            let x = i as f32 * settings.extent[0] / 5.0;
+            let y = i as f32 * settings.extent[1] / 5.0;
+            for line in [
+                [[x, -settings.extent[1], 0.0], [x, settings.extent[1], 0.0]],
+                [[-settings.extent[0], y, 0.0], [settings.extent[0], y, 0.0]],
+            ] {
+                painter.line_segment(line.map(project), Stroke::new(0.5, Color32::from_gray(45)));
+            }
+            painter.text(
+                project([x, 0.0, 0.0]),
+                egui::Align2::LEFT_TOP,
+                format!("{x:.1}"),
+                egui::FontId::proportional(10.0),
+                Color32::GRAY,
+            );
+            if i != 0 {
+                painter.text(
+                    project([0.0, y, 0.0]),
+                    egui::Align2::LEFT_BOTTOM,
+                    format!("{y:.1}"),
+                    egui::FontId::proportional(10.0),
+                    Color32::GRAY,
+                );
+            }
+        }
+    }
     for (end, label, color) in [
         ([bound, 0.0, 0.0], "x", Color32::from_rgb(240, 120, 120)),
         ([0.0, bound, 0.0], "y", Color32::from_rgb(130, 200, 150)),
         ([0.0, 0.0, bound], "z", Color32::from_rgb(140, 170, 245)),
     ] {
-        painter.line_segment([project([0.0; 3]), project(end)], Stroke::new(1.0, color));
+        if curve.is_some() && label == "z" {
+            continue;
+        }
+        let end = if let Some(s) = curve {
+            if label == "x" {
+                [s.extent[0], 0.0, 0.0]
+            } else {
+                [0.0, s.extent[1], 0.0]
+            }
+        } else {
+            end
+        };
+        let start = if curve.is_some() {
+            end.map(|v| -v)
+        } else {
+            [0.0; 3]
+        };
+        painter.line_segment([project(start), project(end)], Stroke::new(1.0, color));
         painter.text(
             project(end),
             egui::Align2::LEFT_BOTTOM,
@@ -80,7 +146,11 @@ pub fn canvas(
     painter.text(
         rect.left_top() + egui::vec2(14.0, 14.0),
         egui::Align2::LEFT_TOP,
-        "Orthographic wireframe · no depth occlusion",
+        if curve.is_some() {
+            "2D Cartesian · XY plane · drag to pan"
+        } else {
+            "Orthographic wireframe · no depth occlusion"
+        },
         egui::FontId::proportional(14.0),
         Color32::GRAY,
     );
@@ -90,6 +160,19 @@ pub fn canvas(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn planar_projection_is_xy_with_pan_and_ignores_orbit_and_depth() {
+        let camera = Camera {
+            yaw: 2.0,
+            tilt: 1.0,
+            pan: [1.0, -1.0],
+            ..Default::default()
+        };
+        assert_eq!(
+            camera.project_2d([2.0, 3.0, 99.0], Pos2::ZERO, 10.0),
+            Pos2::new(30.0, -20.0)
+        );
+    }
 
     #[test]
     fn projection_preserves_center_and_maps_vertical_up() {
@@ -97,6 +180,7 @@ mod tests {
             yaw: 0.0,
             tilt: 0.0,
             zoom: 1.0,
+            pan: [0.0; 2],
         };
         let center = Pos2::new(100.0, 100.0);
         assert_eq!(camera.project([0.0; 3], center, 10.0), center);
@@ -112,6 +196,7 @@ mod tests {
             yaw: std::f32::consts::FRAC_PI_2,
             tilt: 0.0,
             zoom: 1.0,
+            pan: [0.0; 2],
         };
         let point = camera.project([0.0, 2.0, 0.0], Pos2::ZERO, 10.0);
         assert!((point.x + 20.0).abs() < 1e-5);

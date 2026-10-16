@@ -4,6 +4,66 @@ use math_playground::{
 };
 
 #[test]
+fn explicit_plot_mode_keeps_2d_and_3d_meanings_separate_and_history_restores_them() {
+    use math_playground::{
+        curve::CurveSampling,
+        history::{History, Outcome, Snapshot},
+        scene::PlotMode,
+    };
+    let mut scene = Scene::default();
+    scene.request_in_mode("x^2", PlotMode::TwoD).unwrap();
+    let planar = scene.geometry.lines.clone();
+    for text in ["plot x^2", "y=x^2", "plot x^2=y"] {
+        scene.request_in_mode(text, PlotMode::TwoD).unwrap();
+        assert_eq!(scene.geometry.lines, planar);
+    }
+    let settings = CurveSampling {
+        extent: [3.0, 8.0],
+        samples: 512,
+    };
+    scene.plot_curve("x^2", settings).unwrap();
+    let snapshot = Snapshot::capture(&scene);
+    let mut history = History::default();
+    history.record(
+        "x^2".into(),
+        Outcome::Success {
+            snapshot: snapshot.clone(),
+        },
+    );
+    let loaded = History::decode(&serde_json::to_vec(&history).unwrap()).unwrap();
+    scene.request("plot y=x^2").unwrap();
+    assert!(scene.curve.is_none());
+    assert!(scene.surface.is_some());
+    assert!(
+        scene
+            .geometry
+            .lines
+            .iter()
+            .flatten()
+            .any(|p| p[2].abs() > 0.1)
+    );
+    if let Outcome::Success { snapshot } = &loaded.entries[0].outcome {
+        snapshot.restore(&mut scene).unwrap();
+    } else {
+        panic!("expected saved curve")
+    }
+    assert_eq!(scene.curve.as_ref().unwrap().sampling, settings);
+    let before = scene.geometry.lines.clone();
+    assert!(
+        scene
+            .request_in_mode("plot x^2+y^2=1", PlotMode::TwoD)
+            .is_err()
+    );
+    assert_eq!(scene.geometry.lines, before);
+    scene
+        .request_in_mode("create a helix with five turns", PlotMode::TwoD)
+        .unwrap();
+    assert!(scene.curve.is_none() && scene.surface.is_none());
+    snapshot.restore(&mut scene).unwrap();
+    assert!(scene.curve.is_some());
+}
+
+#[test]
 fn function_equations_mesh_and_preserve_scene_on_invalid_calls() {
     let mut scene = Scene::default();
     for request in [

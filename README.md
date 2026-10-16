@@ -53,7 +53,15 @@ The parser is intentionally limited to the documented grammar in SPEC.md. `creat
 
 ## Plot an equation
 
-Apply `plot x^2 - y^2 - z^2 = 0` to plot the double cone along X, or try `plot x^2+y^2+z^2=4` (sphere), `plot z-x*y` (saddle), or `plot x=0.3` (plane). These use a general arithmetic evaluator, not recognized shape templates. `plot F` means `F=0`; `plot left=right` evaluates `left-right=0`.
+Choose **2D · y=f(x)** or **3D · implicit** beside **Input mode**, then submit the next request. Changing the mode selector alone does not reinterpret the current plot. Creating a helix always returns to 3D.
+
+In **2D** mode, enter `x^2` (or `plot x^2`) for a parabola; `y=x^2` and `x^2=y` are equivalent. Functions such as `sin(x)` and constants such as `y=4` also work. This first 2D pass supports explicit y=f(x) only: other variables on the function side or general implicit equations such as `x^2+y^2=1` are rejected. Named constants and implicit multiplication remain separate issues.
+
+The flat XY view has numbered grid lines, drag-to-pan, zoom, and Reset view. X/Y half-extents are 0.1–20; samples are 64–4096 (default 1024). X sets the sampled interval and Y clips it vertically. Click **Apply sampling** after edits. Equal world units have equal screen scale; no 3D orbit/tilt applies to curves. History stores the 2D mode, equation and applied sampling settings, and Restore/Edit for successful entries selects the matching mode. Existing helix/surface history remains readable.
+
+2D uses uniform numerical segments (up to 8,193 evaluations), with undefined/nonfinite intervals skipped and lines clipped to the selected Y range. A midpoint heuristic rejects some discontinuity/high-curvature bridges; it is not a continuity proof. Thin features or sharp detail may be missed, and discontinuities may still produce artifacts. Increase sampling or narrow bounds as appropriate; general implicit 2D curves/adaptive sampling are not implemented.
+
+In **3D** mode, apply `plot x^2 - y^2 - z^2 = 0` to plot the double cone along X, or try `plot x^2+y^2+z^2=4` (sphere), `plot z-x*y` (saddle), or `plot x=0.3` (plane). These use a general arithmetic evaluator, not recognized shape templates. `plot F` means `F=0`; `plot left=right` evaluates `left-right=0`. `plot y=x^2` remains a parabolic cylinder independent of z; bare `plot x^2` retains the existing even-root sampling limitation.
 
 Use lowercase Cartesian variables `x`, `y`, `z` (at most three), finite decimal/scientific numbers, `+ - * / ^`, unary signs, parentheses, and the functions `ln`, `sin`, `cos`, `tan`. Multiplication must be explicit (`2*x`). Powers associate right: `x^2^3` means `x^(2^3)`; `-x^2` means `-(x^2)`. No constants such as pi, polar coordinates, inequalities, equation systems, or executable code. Expressions are limited to 256 bytes and 64 parsing levels; constant-only equations are rejected.
 

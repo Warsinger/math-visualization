@@ -17,6 +17,14 @@ enum Function {
 }
 
 impl Expr {
+    fn uses_variable(&self, index: usize) -> bool {
+        match self {
+            Self::Variable(i) => *i == index,
+            Self::Neg(a) | Self::Function(_, a) => a.uses_variable(index),
+            Self::Binary(_, a, b) => a.uses_variable(index) || b.uses_variable(index),
+            _ => false,
+        }
+    }
     fn eval(&self, p: [f64; 3]) -> Option<f64> {
         let value = match self {
             Self::Number(v) => *v,
@@ -65,6 +73,34 @@ pub struct Equation {
 
 impl Equation {
     pub fn parse(source: &str) -> Result<Self, String> {
+        Self::parse_impl(source, true)
+    }
+    /// Explicit Cartesian y=f(x), including bare f(x) shorthand and constants.
+    pub fn explicit_y(source: &str) -> Result<Self, String> {
+        if source.len() > 256 {
+            return Err("Equation is limited to 256 bytes.".into());
+        }
+        let expression = if let Some((a, b)) = source.split_once('=') {
+            if b.contains('=') {
+                return Err("Use one equality.".into());
+            }
+            if a.trim() == "y" {
+                b
+            } else if b.trim() == "y" {
+                a
+            } else {
+                return Err("2D currently supports y=f(x), f(x)=y, or bare f(x). Use 3D for implicit equations.".into());
+            }
+        } else {
+            source
+        };
+        let equation = Self::parse_impl(expression, false)?;
+        if equation.root.uses_variable(1) || equation.root.uses_variable(2) {
+            return Err("A 2D y=f(x) expression may use x only; y and z are not allowed on the function side.".into());
+        }
+        Ok(equation)
+    }
+    fn parse_impl(source: &str, require_variable: bool) -> Result<Self, String> {
         if source.len() > 256 {
             return Err("Equation is limited to 256 bytes.".into());
         }
@@ -84,7 +120,7 @@ impl Equation {
         if parser.pos != parser.text.len() {
             return Err(format!("Unexpected input at byte {}.", parser.pos + 1));
         }
-        if !root.has_variable() {
+        if require_variable && !root.has_variable() {
             return Err("Use at least one variable: x, y, or z.".into());
         }
         Ok(Self { root })

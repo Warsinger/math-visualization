@@ -1,9 +1,17 @@
+use crate::curve::{self, CurveSampling};
 use crate::{
     command,
     expression::Equation,
     geometry::{self, Geometry, Sampling},
 };
 use std::f32::consts::TAU;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PlotMode {
+    TwoD,
+    #[default]
+    ThreeD,
+}
 
 /// One selected helix. Height is total height; pitch is height / turns.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -64,6 +72,13 @@ pub struct Scene {
     pub helix: Helix,
     pub surface: Option<Surface>,
     pub geometry: Geometry,
+    pub curve: Option<Curve>,
+}
+
+#[derive(Clone)]
+pub struct Curve {
+    pub source: String,
+    pub sampling: CurveSampling,
 }
 
 #[derive(Clone)]
@@ -78,6 +93,7 @@ impl Default for Scene {
             helix: Helix::default(),
             surface: None,
             geometry: Geometry::default(),
+            curve: None,
         };
         scene.replace(scene.helix).expect("default helix is valid");
         scene
@@ -95,6 +111,7 @@ impl Scene {
         };
         self.helix = helix;
         self.surface = None;
+        self.curve = None;
         Ok(())
     }
 
@@ -102,6 +119,7 @@ impl Scene {
         let equation = Equation::parse(source)?;
         let geometry = geometry::mesh(&equation, sampling)?;
         self.geometry = geometry;
+        self.curve = None;
         self.surface = Some(Surface {
             source: source.into(),
             sampling,
@@ -110,7 +128,31 @@ impl Scene {
     }
 
     pub fn request(&mut self, text: &str) -> Result<(), String> {
+        self.request_in_mode(text, PlotMode::ThreeD)
+    }
+    pub fn plot_curve(&mut self, source: &str, sampling: CurveSampling) -> Result<(), String> {
+        let geometry = curve::sample(source, sampling)?;
+        self.geometry = geometry;
+        self.surface = None;
+        self.curve = Some(Curve {
+            source: source.into(),
+            sampling,
+        });
+        Ok(())
+    }
+    pub fn request_in_mode(&mut self, text: &str, mode: PlotMode) -> Result<(), String> {
         let text = text.trim();
+        if mode == PlotMode::TwoD
+            && !text.to_lowercase().starts_with("create ")
+            && !text.starts_with("set ")
+        {
+            let source = text.strip_prefix("plot ").unwrap_or(text).trim();
+            let sampling = self
+                .curve
+                .as_ref()
+                .map_or(CurveSampling::default(), |c| c.sampling);
+            return self.plot_curve(source, sampling);
+        }
         if let Some(source) = text.strip_prefix("plot ") {
             let sampling = self
                 .surface
@@ -118,8 +160,10 @@ impl Scene {
                 .map_or(Sampling::default(), |s| s.sampling);
             self.plot(source.trim(), sampling)
         } else {
-            if self.surface.is_some() && !text.to_lowercase().starts_with("create a helix with ") {
-                return Err("For this surface use 'plot ...' or its sampling controls. Create a helix to use helix commands.".into());
+            if (self.surface.is_some() || self.curve.is_some())
+                && !text.to_lowercase().starts_with("create a helix with ")
+            {
+                return Err("For this plot use a plot request or its sampling controls. Create a helix to use helix commands.".into());
             }
             self.replace(command::parse(text, self.helix)?)
         }
