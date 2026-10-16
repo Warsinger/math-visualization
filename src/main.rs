@@ -27,6 +27,9 @@ struct Playground {
     plot_mode: PlotMode,
     curve_sampling: CurveSampling,
     tangent_enabled: bool,
+    area_enabled: bool,
+    area_bounds: [f64; 2],
+    area_cache: math_playground::integral::Cache,
 }
 
 impl Default for Playground {
@@ -45,6 +48,9 @@ impl Default for Playground {
             plot_mode: PlotMode::Auto,
             curve_sampling: CurveSampling::default(),
             tangent_enabled: false,
+            area_enabled: false,
+            area_bounds: [-1.0, 1.0],
+            area_cache: Default::default(),
         }
     }
 }
@@ -296,6 +302,7 @@ impl Playground {
                     ui.add_enabled_ui(self.pending.is_none(), |ui| {
                         if let Some(curve)=&self.scene.curve {
                             let source=curve.source.clone();
+                            let applied_extent=f64::from(curve.sampling.extent[0]);
                             ui.heading("Selected · 2D curve");
                             for (axis,extent) in ["X ±","Y ±"].into_iter().zip(&mut self.curve_sampling.extent) {
                                 ui.add(egui::Slider::new(extent,0.1..=20.0).text(axis));
@@ -314,6 +321,24 @@ impl Playground {
                                     ui.label("Hover along the curve to explore the tangent at the inspected point.");
                                     ui.small("One-sided finite differences; convergence is approximate, not symbolic proof.");
                                 } else { ui.label("Tangent exploration requires explicit y=f(x)."); }
+                            }
+                            ui.checkbox(&mut self.area_enabled,"Explore integral / area");
+                            if self.area_enabled {
+                                if math_playground::expression::Equation::explicit_y(&self.scene.curve.as_ref().unwrap().source).is_ok() {
+                                    for (label,bound) in ["From a","To b"].into_iter().zip(&mut self.area_bounds) {
+                                        *bound=bound.clamp(-applied_extent,applied_extent);
+                                        ui.add(egui::Slider::new(bound,-applied_extent..=applied_extent).text(label));
+                                    }
+                                    let current_source=&self.scene.curve.as_ref().unwrap().source;
+                                    match self.area_cache.get(current_source,self.area_bounds[0],self.area_bounds[1]) {
+                                        Ok(area) => {
+                                            ui.label(format!("Signed integral ≈ {:.6}",area.signed));
+                                            ui.label(format!("Total area ≈ {:.6}",area.total));
+                                        }
+                                        Err(error) => {ui.label(error);}
+                                    }
+                                    ui.small("Numerical Simpson estimate; no continuity proof. Green above / red below x-axis. Reversing bounds negates integral, not total area.");
+                                } else {ui.label("Integration requires explicit y=f(x).");}
                             }
                         } else if let Some(surface) = &self.scene.surface {
                             let source = surface.source.clone();
@@ -360,7 +385,10 @@ impl Playground {
                     math_playground::expression::Equation::parse(&surface.source).ok()
                 } else { None };
                 let tangent_source = if self.tangent_enabled { self.scene.curve.as_ref().map(|curve|curve.source.as_str()) } else { None };
-                let output=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling), tangent_source);
+                let area=if self.area_enabled {
+                    self.scene.curve.as_ref().and_then(|curve|self.area_cache.get(&curve.source,self.area_bounds[0],self.area_bounds[1]).as_ref().ok())
+                } else {None};
+                let output=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling), tangent_source, area);
                 canvas_rect=output.rect;
                 inspected_point=output.selected;
                 tangent=output.tangent;
@@ -440,9 +468,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tangent_controls_leave_bottom_inspection_visible_at_minimum_size() {
+    fn exploration_controls_leave_bottom_inspection_visible_at_minimum_size() {
         let mut app = Playground {
             tangent_enabled: true,
+            area_enabled: true,
             history_open: true,
             ..Default::default()
         };
@@ -492,6 +521,7 @@ mod tests {
     fn all_scene_types_generate_finite_headless_ui_shapes() {
         let mut app = Playground {
             tangent_enabled: true,
+            area_enabled: true,
             ..Default::default()
         };
         for (request, mode) in [
@@ -600,6 +630,7 @@ mod tests {
                 let mut app = Playground {
                     history_open: true,
                     tangent_enabled: true,
+                    area_enabled: true,
                     ..Default::default()
                 };
                 if mode == PlotMode::TwoD {
