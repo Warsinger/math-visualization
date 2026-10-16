@@ -26,6 +26,8 @@ Open **http://127.0.0.1:8080/**. Stop the server with **Ctrl+C** in its terminal
 
 ## Behavior and limits
 
+The build prepares a matched JS/Wasm pair under `dist/web/assets/<hash>/` and includes Pages hosting headers. `node scripts/verify-web.mjs` checks that artifact. Local serving remains loopback-only; see [DEPLOYMENT.md](DEPLOYMENT.md) for Cloudflare publishing and rollback.
+
 - Typed requests, Apply/Enter, object controls, Apply sampling, camera controls and the existing applicable exploration tools share the native UI. The browser entry selects a dark theme so plot feedback remains legible.
 - History is **session-only**: requests, outcomes, timestamps, restore, and clear work in memory. Reloading or closing the page loses it. The history panel states this explicitly. The browser never opens the desktop history file. Persistent browser storage is [#55](https://github.com/Warsinger/math-visualization/issues/55).
 - Browser computations run synchronously under the existing parser/sampling budgets, using a candidate scene that replaces the current scene only on success. Expensive plots can briefly pause input and repaint; a computing message may not paint before the calculation finishes. Native calculations still use their background thread. Workers/cancellation and performance guarantees are [#56](https://github.com/Warsinger/math-visualization/issues/56).

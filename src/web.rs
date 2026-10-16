@@ -33,7 +33,7 @@ pub fn launch() {
             .await;
         match result {
             Ok(()) => status(
-                "Local browser app · session-only history · large plots may briefly pause interaction",
+                "Browser app · session-only history · large plots may briefly pause interaction",
             ),
             Err(error) => {
                 web_sys::console::error_1(&error);
