@@ -284,7 +284,9 @@ impl Playground {
                 ui.label("Sampling can miss thin features, singularities and even roots; discontinuities can mislead.");
             });
             ui.separator();
-            let canvas_height = (ui.available_height() - 120.0).max(120.0);
+            let canvas_height = (ui.available_height() - 190.0).max(120.0);
+            let mut inspected_point = None;
+            let mut inspection_equation = None;
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(255.0);
@@ -341,12 +343,15 @@ impl Playground {
                     ui.label(if self.scene.curve.is_some(){"Drag to pan. Scroll to zoom."}else{"Drag to rotate. Scroll to zoom."});
                     ui.label("Hover near a line to inspect coordinates and residual.");
                 });
-                let equation = if let Some(curve) = &self.scene.curve {
+                inspection_equation = if let Some(curve) = &self.scene.curve {
                     math_playground::expression::Equation::planar(&curve.source).ok()
                 } else if let Some(surface) = &self.scene.surface {
                     math_playground::expression::Equation::parse(&surface.source).ok()
                 } else { None };
-                canvas_rect=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling),equation.as_ref());
+                (canvas_rect,inspected_point)=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling));
+            });
+            ui.allocate_ui(egui::vec2(ui.available_width(), 65.0), |ui| {
+                view::inspection_readout(ui, inspected_point, inspection_equation.as_ref());
             });
             ui.separator();
             if let Some(curve)=&self.scene.curve {
