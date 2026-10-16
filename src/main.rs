@@ -1,7 +1,11 @@
 mod view;
 
 use eframe::egui;
-use math_playground::{geometry::Sampling, scene::Scene};
+use math_playground::{
+    geometry::Sampling,
+    history::{Outcome, Snapshot, Store, truncate},
+    scene::Scene,
+};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use view::Camera;
 
@@ -13,6 +17,9 @@ struct Playground {
     error: bool,
     sampling: Sampling,
     pending: Option<Receiver<Result<Scene, String>>>,
+    history: Store,
+    history_open: bool,
+    pending_history_request: Option<String>,
 }
 
 impl Default for Playground {
@@ -25,6 +32,9 @@ impl Default for Playground {
             error: false,
             sampling: Sampling::default(),
             pending: None,
+            history: Store::open(None),
+            history_open: false,
+            pending_history_request: None,
         }
     }
 }
@@ -79,6 +89,101 @@ impl Playground {
             }
             _ => {}
         }
+        if self.pending.is_none()
+            && let Some(request) = self.pending_history_request.take()
+        {
+            let outcome = if self.error {
+                Outcome::Error {
+                    message: truncate(&self.feedback, 1024),
+                }
+            } else {
+                Outcome::Success {
+                    snapshot: Snapshot::capture(&self.scene),
+                }
+            };
+            self.history.record(request, outcome);
+        }
+    }
+
+    fn history_ui(&mut self, ui: &mut egui::Ui) {
+        let mut restore = None;
+        let mut retry = None;
+        egui::Window::new("History")
+            .open(&mut self.history_open)
+            .default_width(600.0)
+            .show(ui.ctx(), |ui| {
+                ui.label("Newest first · up to 200 entries · timestamps in UTC");
+            ui.small("Restore uses saved plot settings. Edit/retry fills the input; current settings apply when submitted.");
+                if let Some(path) = &self.history.path {
+                    ui.label(format!("Storage: {}", path.display()));
+                }
+                if let Some(warning) = &self.history.warning {
+                    ui.colored_label(egui::Color32::YELLOW, warning);
+                }
+                ui.add_enabled_ui(self.pending.is_none(), |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.button("Add current plot").clicked() {
+                            let snapshot = Snapshot::capture(&self.scene);
+                            self.history
+                                .record(snapshot.request(), Outcome::Success { snapshot });
+                        }
+                        if ui.button("Clear history").clicked() {
+                            self.history.clear();
+                        }
+                    });
+                    if self.history.history.entries.is_empty() {
+                        ui.label("No history yet. Apply a request or add the current plot.");
+                    }
+                    egui::ScrollArea::vertical()
+                        .max_height(450.0)
+                        .show(ui, |ui| {
+                            for entry in self.history.history.entries.iter().rev() {
+                                ui.separator();
+                                let date =
+                                    chrono::DateTime::from_timestamp(entry.timestamp as i64, 0)
+                                        .map(|d| d.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                                        .unwrap_or_else(|| "Unknown time".into());
+                                ui.small(date);
+                                ui.label(&entry.request);
+                                match &entry.outcome {
+                                    Outcome::Success { snapshot } => {
+                                        ui.colored_label(egui::Color32::LIGHT_GREEN, "Succeeded");
+                                        if let Snapshot::Surface { sampling, .. } = snapshot {
+                                            ui.small(format!(
+                                                "Bounds ±{:?}; {} cells/axis",
+                                                sampling.extent, sampling.resolution
+                                            ));
+                                        }
+                                        ui.horizontal(|ui| {
+                                            if ui.button("Restore").clicked() {
+                                                restore = Some(snapshot.clone());
+                                            }
+                                            if ui.button("Edit/retry").clicked() {
+                                                retry = Some(snapshot.request());
+                                            }
+                                        });
+                                    }
+                                    Outcome::Error { message } => {
+                                        ui.colored_label(
+                                            egui::Color32::LIGHT_RED,
+                                            format!("Failed: {message}"),
+                                        );
+                                        if ui.button("Edit/retry").clicked() {
+                                            retry = Some(entry.request.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                });
+            });
+        if let Some(request) = retry {
+            self.request = request;
+        }
+        if let Some(snapshot) = restore {
+            self.request = snapshot.request();
+            self.start(move |scene| snapshot.restore(scene));
+        }
     }
 }
 
@@ -101,12 +206,18 @@ impl Playground {
                     let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if ui.button("Apply").clicked() || enter {
                         let request = self.request.clone();
+                        self.pending_history_request=Some(request.clone());
                         self.start(move |scene| scene.request(&request));
                     }
                 });
             });
             let color = if self.error { egui::Color32::LIGHT_RED } else { egui::Color32::LIGHT_GREEN };
             ui.colored_label(color, &self.feedback);
+            ui.horizontal(|ui| {
+                if ui.button("History").clicked() { self.history_open=true; }
+                ui.small(format!("{} entries",self.history.history.entries.len()));
+            });
+            if let Some(warning)=&self.history.warning { ui.colored_label(egui::Color32::YELLOW,warning); }
             ui.collapsing("Request examples and equation syntax", |ui| {
                 ui.label("create a helix with five turns · set radius to 2 and height to 6");
                 ui.label("plot x^2 - y^2 - z^2 = 0 · plot x^2+y^2+z^2=4 · plot z-x*y");
@@ -130,6 +241,7 @@ impl Playground {
                             ui.label("Domain is symmetric about zero. Click values to type. Apply sampling to rebuild.");
                             if ui.button("Apply sampling").clicked() {
                                 let sampling = self.sampling;
+                                self.pending_history_request=Some(format!("plot {source}"));
                                 self.start(move |scene| scene.plot(&source, sampling));
                             }
                         } else {
@@ -166,6 +278,7 @@ impl Playground {
                 ui.label("Height stays fixed when turns change. Pitch = height / turns. Units are abstract.");
             }
         });
+        self.history_ui(ui);
     }
 }
 
@@ -187,7 +300,10 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            Ok(Box::new(Playground::default()))
+            Ok(Box::new(Playground {
+                history: Store::local(),
+                ..Default::default()
+            }))
         }),
     )
 }
@@ -224,7 +340,10 @@ mod tests {
 
     #[test]
     fn worker_result_is_applied_atomically_and_errors_keep_previous_scene() {
-        let mut app = Playground::default();
+        let mut app = Playground {
+            pending_history_request: Some("plot x^2-y^2-z^2=0".into()),
+            ..Default::default()
+        };
         app.start(|scene| scene.request("plot x^2-y^2-z^2=0"));
         let result = app
             .pending
@@ -239,12 +358,50 @@ mod tests {
         assert!(app.scene.surface.is_some());
         assert!(app.pending.is_none());
         assert!(!app.error);
+        assert_eq!(app.history.history.entries.len(), 1);
+        assert!(matches!(
+            app.history.history.entries[0].outcome,
+            Outcome::Success { .. }
+        ));
         let before = app.scene.geometry.lines.clone();
         let (tx, rx) = mpsc::channel();
         tx.send(Err("Bad equation".into())).unwrap();
         app.pending = Some(rx);
+        app.pending_history_request = Some("plot bad".into());
         app.finish();
         assert!(app.error);
         assert_eq!(app.scene.geometry.lines, before);
+        assert_eq!(app.history.history.entries.len(), 2);
+        assert!(matches!(
+            app.history.history.entries[1].outcome,
+            Outcome::Error { .. }
+        ));
+        app.finish();
+        assert_eq!(app.history.history.entries.len(), 2);
+    }
+
+    #[test]
+    fn history_panel_renders_success_and_failure_without_filesystem_access() {
+        let mut app = Playground {
+            history_open: true,
+            ..Default::default()
+        };
+        app.history.record(
+            "create a helix with five turns".into(),
+            Outcome::Success {
+                snapshot: Snapshot::capture(&app.scene),
+            },
+        );
+        app.history.record(
+            "bad request".into(),
+            Outcome::Error {
+                message: "Unsupported".into(),
+            },
+        );
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.draw(ui));
+        output.textures_delta.clear();
+        assert!(!output.shapes.is_empty());
+        assert_eq!(app.history.history.entries.len(), 2);
     }
 }

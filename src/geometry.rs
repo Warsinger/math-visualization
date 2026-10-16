@@ -9,7 +9,7 @@ pub struct Geometry {
     pub skipped_tetrahedra: usize,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Sampling {
     pub extent: [f32; 3],
     pub resolution: usize,

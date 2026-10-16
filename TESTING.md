@@ -1,5 +1,20 @@
 # Testing the playground
 
+## History checks
+
+Automated tests use isolated temporary directories or an in-memory store, never the user's real history. They cover JSON round trips, repeated replacement, the 200-entry limit, clearing, invalid/oversized/future-version input, corrupt-file preservation, unavailable/unwritable storage, UTF-8 truncation, helix/sampling restoration and exactly-once worker success/error recording. Headless drawing covers a history panel containing both outcomes.
+
+Manual protocol for issue #3:
+
+1. Submit a helix edit, a surface request, and an invalid request. Open History; confirm timestamp/order, success/error labels and useful error text.
+2. Change current helix/plot and bounds; Restore the earlier entry. Confirm it restores the original parameters or sampling settings, with no duplicate history row and no change in camera.
+3. Change sliders, choose Add current plot, and restore that row. Apply sampling on a surface and confirm it records the successful settings.
+4. Choose Edit/retry on an error or success; confirm it fills the input and requires Apply/Enter. The current sampling applies to submitted text; Restore instead uses saved sampling.
+5. Restart the app and confirm history remains. Check the displayed storage path. Clear history and restart to verify it stays empty.
+6. With the app closed, test a deliberately malformed history file after backing up any useful history. Confirm a visible warning, usable plotting/session history, and unchanged file contents. Restore/move the file and restart for recovery. Do not run this against valuable history without a backup.
+
+Pixel-level/interactive validation remains manual; headless tests do not establish window layout or input ergonomics.
+
 ## Automated checks
 
 Run the four commands in README or the VS Code **Verify** task before each meaningful change. rustfmt provides consistent layout; Clippy catches common mistakes; tests protect behavior; build ensures the GUI binary links. CI repeats these checks on Windows x64, Linux x64, and macOS Apple Silicon and builds release executables. Avoid accepting a green geometry test as proof that the GUI works.

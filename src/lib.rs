@@ -2,4 +2,5 @@
 pub mod command;
 pub mod expression;
 pub mod geometry;
+pub mod history;
 pub mod scene;

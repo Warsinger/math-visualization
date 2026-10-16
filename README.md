@@ -35,6 +35,20 @@ The first build downloads dependencies and takes longer. Normal app use needs no
 - Drag the canvas to rotate, scroll over it to zoom, or use camera sliders.
 - Reset view restores camera framing.
 
+## History for repeatable exploration
+
+Open **History** to review the newest 200 entries, including submitted requests, successful **Apply sampling** operations, UTC timestamps, and success/error outcomes. **Restore** rebuilds a successful plot with its saved helix parameters or equation, bounds and resolution, regardless of the current scene. **Edit/retry** fills the request field; applying that text uses the current scene's settings. After adjusting sliders, use **Add current plot** to keep that configuration without recording every slider movement. Restore itself does not add duplicate entries. **Clear history** clears the retained list.
+
+History saves automatically between sessions as versioned JSON in a per-user application-data directory, outside the executable and repository:
+
+- Windows: `%LOCALAPPDATA%\MathPlayground\history.json`
+- Linux: `$XDG_DATA_HOME/MathPlayground/history.json`, or `~/.local/share/MathPlayground/history.json`
+- macOS: `~/Library/Application Support/MathPlayground/history.json`
+
+The panel displays the actual storage path. Geometry, camera state, named saves, favorites and sharing are not stored; saved/shared scenes remain [issue #16](https://github.com/Warsinger/math-visualization/issues/16). Request/error text is bounded to 1,024 UTF-8 bytes per entry. No history is uploaded. Each save writes and syncs a temporary file in the same directory before replacing the previous file. Multiple simultaneous app instances use last-writer-wins behavior; use one instance when retaining history.
+
+If storage is unavailable, plotting and session history still work and a warning explains the saving failure. Damaged, oversized or unsupported-version files are left untouched and saving is disabled for that session; move/repair the file and restart to re-enable saving. Clear history in this fallback mode clears only the session list. Valid entries whose geometry can no longer be rebuilt fail safely without changing the current plot.
+
 The parser is intentionally limited to the documented grammar in SPEC.md. `create` replaces the one helix with default unspecified values; `set` preserves unspecified values. Total height stays fixed when turns change. Unsupported requests report errors without altering geometry. Taper, animation, and broader language are planned later.
 
 ## Plot an equation
