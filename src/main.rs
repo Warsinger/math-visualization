@@ -184,7 +184,7 @@ impl Playground {
                                         .map(|d| d.format("%Y-%m-%d %H:%M:%S UTC").to_string())
                                         .unwrap_or_else(|| "Unknown time".into());
                                 ui.small(date);
-                                ui.label(&entry.request);
+                                ui.label(egui::RichText::new(&entry.request).font(egui::FontId::monospace(16.0)));
                                 match &entry.outcome {
                                     Outcome::Success { snapshot } => {
                                         ui.colored_label(egui::Color32::LIGHT_GREEN, "Succeeded");
