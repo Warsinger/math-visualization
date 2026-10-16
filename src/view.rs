@@ -67,15 +67,26 @@ pub struct CanvasOutput {
     pub tangent: Option<Result<math_playground::derivative::Tangent, String>>,
 }
 
+#[derive(Default)]
+pub struct Overlays<'a> {
+    pub tangent_source: Option<&'a str>,
+    pub area: Option<&'a math_playground::integral::Area>,
+    pub slice: Option<&'a math_playground::slice::Slice>,
+}
+
 pub fn canvas(
     ui: &mut egui::Ui,
     geometry: &Geometry,
     camera: &mut Camera,
     height: f32,
     curve: Option<CurveSampling>,
-    tangent_source: Option<&str>,
-    area: Option<&math_playground::integral::Area>,
+    overlays: Overlays<'_>,
 ) -> CanvasOutput {
+    let Overlays {
+        tangent_source,
+        area,
+        slice,
+    } = overlays;
     let (response, painter) = ui.allocate_painter(
         egui::vec2(ui.available_width().max(50.0), height),
         egui::Sense::drag(),
@@ -220,6 +231,13 @@ pub fn canvas(
             }
         }
     }
+    if let Some(slice) = slice {
+        painter.add(egui::Shape::convex_polygon(
+            slice.plane.map(project).to_vec(),
+            Color32::from_rgba_unmultiplied(255, 190, 70, 18),
+            Stroke::new(1.0, Color32::from_rgb(210, 150, 60)),
+        ));
+    }
     for (i, pair) in geometry.lines.iter().enumerate() {
         let t = i as f32 / geometry.lines.len().max(1) as f32;
         let color = Color32::from_rgb((80.0 + 150.0 * t) as u8, (210.0 - 70.0 * t) as u8, 240);
@@ -245,6 +263,11 @@ pub fn canvas(
         && let Some(line) = tangent.segment(settings.extent)
     {
         painter.line_segment(line.map(project), Stroke::new(2.0, Color32::YELLOW));
+    }
+    if let Some(slice) = slice {
+        for line in &slice.geometry.lines {
+            painter.line_segment(line.map(project), Stroke::new(2.5, Color32::YELLOW));
+        }
     }
     painter.text(
         rect.left_top() + egui::vec2(14.0, 14.0),
@@ -328,8 +351,10 @@ mod tests {
                     &mut camera,
                     200.0,
                     Some(settings),
-                    source,
-                    None,
+                    Overlays {
+                        tangent_source: source,
+                        ..Default::default()
+                    },
                 );
                 rect = result.rect;
                 assert_eq!(result.selected.is_some(), x.is_some());
@@ -385,8 +410,7 @@ mod tests {
                         &mut camera,
                         200.0,
                         Some(CurveSampling::default()),
-                        None,
-                        None,
+                        Overlays::default(),
                     );
                     rect = output.rect;
                     selected = output.selected;
