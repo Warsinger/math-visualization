@@ -442,6 +442,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn tangent_controls_leave_bottom_inspection_visible_at_minimum_size() {
+        let mut app = Playground {
+            tangent_enabled: true,
+            history_open: true,
+            ..Default::default()
+        };
+        app.scene
+            .plot_curve("x^2", CurveSampling::default())
+            .unwrap();
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(950.0, 760.0),
+                )),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                app.draw(ui);
+            });
+            output.textures_delta.clear();
+            let text = output
+                .shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    egui::Shape::Text(t)
+                        if t.galley.job.text.contains("Approximate segment point;") =>
+                    {
+                        Some(t)
+                    }
+                    _ => None,
+                })
+                .expect("bottom inspection readout must remain visible");
+            assert!(
+                text.pos.y + text.galley.size().y <= 760.0,
+                "readout extends below window"
+            );
+        }
+    }
+
+    #[test]
     fn simulated_startup_failure_returns_before_window_creation() {
         let error = run(true).unwrap_err().to_string();
         assert!(error.contains("Simulated startup failure"));
