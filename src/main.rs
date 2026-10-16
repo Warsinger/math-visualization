@@ -1,7 +1,10 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+#[cfg(not(target_arch = "wasm32"))]
 mod startup;
 mod view;
+#[cfg(target_arch = "wasm32")]
+mod web;
 
 use eframe::egui;
 use math_playground::{
@@ -47,7 +50,7 @@ impl Default for Playground {
             error: false,
             sampling: Sampling::default(),
             pending: None,
-            history: Store::open(None),
+            history: Store::session(),
             history_open: false,
             pending_history_request: None,
             plot_mode: PlotMode::Auto,
@@ -81,10 +84,14 @@ impl Playground {
         self.pending = Some(rx);
         self.error = false;
         self.feedback = "Computing bounded geometry…".into();
-        std::thread::spawn(move || {
+        let task = move || {
             let result = work(&mut candidate).map(|()| candidate);
             let _ = tx.send(result);
-        });
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::spawn(task);
+        #[cfg(target_arch = "wasm32")]
+        task();
     }
     fn finish(&mut self) {
         let result = self.pending.as_ref().map(|rx| rx.try_recv());
@@ -174,6 +181,8 @@ impl Playground {
                     if ui.button("Hide").clicked() { self.history_open=false; }
                 });
                 ui.label("Newest first · up to 200 entries · timestamps in UTC");
+                #[cfg(target_arch = "wasm32")]
+                ui.small("Browser session only: history resets when this page reloads.");
             ui.small("Restore uses saved plot settings. Edit/retry fills the input; current settings apply when submitted.");
                 if let Some(path) = &self.history.path {
                     ui.label(format!("Storage: {}", path.display()));
@@ -457,6 +466,7 @@ impl eframe::App for Playground {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> std::process::ExitCode {
     let simulate_error = std::env::args_os()
         .skip(1)
@@ -470,6 +480,7 @@ fn main() -> std::process::ExitCode {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn run(simulate_error: bool) -> eframe::Result {
     if simulate_error {
         return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
@@ -495,7 +506,12 @@ fn run(simulate_error: bool) -> eframe::Result {
     )
 }
 
-#[cfg(test)]
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    web::launch();
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 

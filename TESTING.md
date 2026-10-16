@@ -1,5 +1,9 @@
 # Testing the playground
 
+## Local browser checks
+
+See [BROWSER.md](docs/BROWSER.md) for build/serve commands, the tested browser baseline, manual results and known limits. Build the Wasm target and run its lint with `cargo clippy --locked --target wasm32-unknown-unknown -- -D warnings`; then use the local browser protocol there. Native CI does not currently run browser UI tests.
+
 ## 2D Cartesian checks
 
 Automated tests cover equality of bare/shorthand/explicit/reversed parabola forms, zero Z coordinates, clipping and domains, constant functions, invalid variables/implicit forms and sampling limits, unchanged 3D cylinders, history JSON/restoration and mode/control synchronization, planar camera projection, headless drawing, and non-overlapping history layout at minimum/default sizes in both modes.
