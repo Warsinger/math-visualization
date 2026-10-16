@@ -65,3 +65,16 @@ Manual review: integrate `x^2` from 0 to 1 (about 1/3), `x` from -1 to 1 (signed
 On a 3D implicit surface, enable **Explore cross-section**, choose X/Y/Z (the fixed coordinate) and move **Plane position** within the applied sampling domain. An amber plane and yellow sampled intersection move together. This uses the same bounded marching-triangle contour kernel as planar implicit curves, sampled directly from the equation on the plane, not intersections with existing wireframe edges. It is reusable for future partial-derivative slices. Results cache by equation, applied sampling, axis and position; camera-only changes do not rebuild slices. Settings are transient and not history state.
 
 The slice uses twice the applied surface resolution per free axis (16–80 cells; at most 6561 evaluations). Undefined regions are skipped and counted. An all-zero sampled field reports that the intersection may fill the plane or be unresolved. Empty geometry is not proof of no intersection; tangencies/point intersections, even roots, thin features and discontinuities retain the contour algorithm's limits. The renderer has no depth occlusion, including the plane. Try `x^2+y^2+z^2=1` with Z=0 and Z=0.5, then Z=2 for an empty sampled slice. Native interaction/appearance remains a manual check.
+
+## Extended mathematical functions
+
+See the [function reference](FUNCTIONS.md) for names, argument order, real domains,
+principal branches and numerical limitations. In Auto mode try `cbrt(x)`,
+`log(abs(x)+1,2)`, `tanh(x)` or `min(abs(x),1)`; for 3D try
+`atan2(y,x)=z`. Calls take one or two parenthesized arguments, according to the
+function. Inspect points and restore these plots from History as usual. Smooth
+explicit functions work with tangent/area exploration; corners, jumps, poles and
+branch cuts may report uncertainty or sampling artifacts. Domain exclusions are
+sampling outcomes, whereas malformed syntax rejects the request without replacing
+the plot. ASCII calls are required; root symbols and absolute-value bars remain
+optional follow-ups.
