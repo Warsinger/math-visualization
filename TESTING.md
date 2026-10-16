@@ -73,3 +73,22 @@ Automated checks are recorded in README. Native startup is a smoke check only; i
 Automated tests verify ln at e, sine/cosine/tangent at known radian angles, nested calls and power/unary precedence, required parentheses/one argument, unknown names, retained parser limits, log at positive/zero/negative inputs, overflow and invalid intermediates, and the tangent near-pole guard plus signs on either side. Scene tests mesh all four functions and a nested expression, verify finite geometry and skipped logarithm-domain regions, preserve geometry on malformed calls, and return to a helix.
 
 Manual review: try `plot ln(x)=y`, `plot sin(x)=z`, `plot cos(x)=y`, `plot tan(x)=z`, and `plot ln(cos(x)+2)=y`. These are 3D surfaces extended along the unused coordinate, not 2D plots. Check log-domain feedback, rotate the surfaces, and narrow X to ±1 for a tangent branch without poles. With X at ±3, pole-crossing artifacts can occur despite near-pole sample exclusion. Check malformed `plot sin(x,y)` preserves the preceding scene and the new function examples remain readable. Pixel/interaction review remains pending.
+
+## Coverage reports
+
+CI's **Coverage (Linux debug)** job uses [cargo-llvm-cov 0.9.1](https://github.com/taiki-e/cargo-llvm-cov) with stable Rust's llvm-tools-preview. It runs all automated test targets once with instrumentation on Linux x64 using the default debug profile (including this project's dev opt-level=1). Report generation reuses that run for HTML, LCOV and JSON; it does not run tests three times. Instrumented compilation uses a separate cache because it cannot reuse ordinary compiled objects safely.
+
+The Actions run summary lists line, function and region coverage per source file. Download **coverage-linux-debug**, extract it and open **html/index.html** to inspect uncovered source lines. Reports are retained for 14 days. Dependencies, generated target code and integration-test source are excluded. Inline unit-test code is included in source-file percentages; percentages are a guide to gaps rather than a pure production-code denominator. Stable collection does not enable branch coverage or doctest instrumentation. There currently are no doctests.
+
+Coverage is a separate Linux/debug measurement; the ordinary three-platform debug/release tests still run. No paid service, upload to an external coverage service, percentage threshold, or additional branch-protection rule is introduced. Collection/report failures fail the job and appear in PR checks. Native GUI event loops, real mouse/keyboard behavior, GPU/driver behavior and pixels are not validated by headless drawing coverage. We do not exclude the main/view modules to conceal those gaps or add interaction tests just to raise a score.
+
+To reproduce on a supported development machine:
+
+```sh
+rustup component add llvm-tools-preview
+cargo install cargo-llvm-cov --version 0.9.1 --locked
+cargo llvm-cov --locked --all-targets --no-report
+cargo llvm-cov report --html --output-dir dist/coverage
+```
+
+Start review with uncovered parser/error paths, geometry budgets/domain boundaries, scene failure atomicity, persistence recovery and worker completion. Compare the per-file results and inspect source locations before adding a focused behavioral regression test. GUI ergonomics remain a separate manual decision.
