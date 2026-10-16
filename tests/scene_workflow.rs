@@ -4,6 +4,148 @@ use math_playground::{
 };
 
 #[test]
+fn extended_functions_plot_and_restore_through_shared_evaluator() {
+    use math_playground::{
+        curve::CurveSampling,
+        expression::Equation,
+        geometry::Sampling,
+        history::{Outcome, Snapshot, Store},
+        scene::PlotMode,
+    };
+    let mut scene = Scene::default();
+    for source in [
+        "sqrt(x)",
+        "cbrt(x)",
+        "log(abs(x)+1,2)",
+        "atan2(sin(x),cos(x))",
+        "sinh(x)",
+        "asin(x)",
+        "acosh(x)",
+        "min(abs(x),1)",
+        "max(x,0)",
+        "sign(x)",
+        "sec(x)",
+    ] {
+        scene.request_in_mode(source, PlotMode::Auto).unwrap();
+        assert!(scene.curve.is_some());
+        assert!(!scene.geometry.lines.is_empty(), "{source}");
+        assert!(
+            scene
+                .geometry
+                .lines
+                .iter()
+                .flatten()
+                .flatten()
+                .all(|v| v.is_finite())
+        );
+        let saved = Snapshot::capture(&scene);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.json");
+        let mut store = Store::open(Some(path.clone()));
+        store.record(
+            source.into(),
+            Outcome::Success {
+                snapshot: saved.clone(),
+            },
+        );
+        let loaded = Store::open(Some(path));
+        assert!(loaded.warning.is_none());
+        if let Outcome::Success { snapshot } = &loaded.history.entries[0].outcome {
+            snapshot.restore(&mut scene).unwrap();
+        } else {
+            panic!("successful snapshot expected");
+        }
+        assert_eq!(Snapshot::capture(&scene), saved);
+    }
+    for source in [
+        "sqrt(x)=z",
+        "log(abs(x)+1,2)+y=z",
+        "atan2(y,x)=z",
+        "tanh(x)=z",
+        "min(x,z)=y",
+    ] {
+        scene.request_in_mode(source, PlotMode::Auto).unwrap();
+        assert!(scene.surface.is_some());
+        assert!(!scene.geometry.lines.is_empty(), "{source}");
+        assert!(
+            scene
+                .geometry
+                .lines
+                .iter()
+                .flatten()
+                .flatten()
+                .all(|v| v.is_finite())
+        );
+    }
+    scene.plot("sqrt(x)=z", Sampling::default()).unwrap();
+    assert!(scene.geometry.skipped_tetrahedra > 0);
+    assert!(scene.geometry.lines.iter().flatten().all(|p| p[0] >= 0.0));
+    let before = scene.geometry.lines.clone();
+    for source in ["log02(x)", "atan2(x)", "sqrt(x,2)", "max(x,)"] {
+        assert!(scene.request_in_mode(source, PlotMode::Auto).is_err());
+        assert_eq!(scene.geometry.lines, before);
+    }
+    let mut planar = Scene::default();
+    planar
+        .plot_curve("cbrt(x)", CurveSampling::default())
+        .unwrap();
+    let p = planar
+        .geometry
+        .lines
+        .iter()
+        .flatten()
+        .find(|p| p[0] < -1.0)
+        .unwrap();
+    assert!(
+        Equation::planar("cbrt(x)")
+            .unwrap()
+            .evaluate(p.map(f64::from))
+            .unwrap()
+            .abs()
+            < 1e-5
+    );
+}
+
+#[test]
+fn extended_functions_work_with_tangents_and_integrals_without_claiming_smooth_corners() {
+    use math_playground::{derivative::tangent, integral::integrate};
+    for (source, x, slope) in [
+        ("sqrt(x)", 4.0, 0.25),
+        ("cbrt(x)", -8.0, 1.0 / 12.0),
+        ("log2(x)", 1.0, 1.0 / std::f64::consts::LN_2),
+        ("tanh(x)", 0.0, 1.0),
+    ] {
+        let t = tangent(source, x).unwrap();
+        assert!((t.slope - slope).abs() < 1e-4, "{source}: {t:?}");
+    }
+    for source in [
+        "abs(x)",
+        "0.00001*abs(x)",
+        "min(x,-x)",
+        "max(x,-x)",
+        "sign(x)",
+        "sqrt(x)",
+        "cbrt(x)",
+        "atan2(x,-1)",
+        "csc(x)",
+    ] {
+        assert!(tangent(source, 0.0).is_err(), "{source}");
+    }
+    for (source, a, b, expected) in [
+        ("sqrt(x)", 0.0, 1.0, 2.0 / 3.0),
+        ("abs(x)", -1.0, 1.0, 1.0),
+        ("max(x,0)", -1.0, 1.0, 0.5),
+        ("min(x,0)", -1.0, 1.0, -0.5),
+    ] {
+        let area = integrate(source, a, b).unwrap();
+        assert!((area.signed - expected).abs() < 1e-5, "{source}");
+    }
+    for source in ["sqrt(x)", "log2(x)", "csc(x)", "sign(x)", "atan2(x,-1)"] {
+        assert!(integrate(source, -1.0, 1.0).is_err(), "{source}");
+    }
+}
+
+#[test]
 fn automatic_dimension_selection_and_implicit_history() {
     use math_playground::{
         history::{History, Outcome, Snapshot},
