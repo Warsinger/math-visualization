@@ -74,6 +74,7 @@ pub fn canvas(
     height: f32,
     curve: Option<CurveSampling>,
     tangent_source: Option<&str>,
+    area: Option<&math_playground::integral::Area>,
 ) -> CanvasOutput {
     let (response, painter) = ui.allocate_painter(
         egui::vec2(ui.available_width().max(50.0), height),
@@ -169,6 +170,55 @@ pub fn canvas(
             egui::FontId::proportional(14.0),
             color,
         );
+    }
+    if let (Some(area), Some(settings)) = (area, curve) {
+        for point in [area.points.first(), area.points.last()]
+            .into_iter()
+            .flatten()
+        {
+            let x = point[0] as f32;
+            painter.line_segment(
+                [
+                    project([x, -settings.extent[1], 0.0]),
+                    project([x, settings.extent[1], 0.0]),
+                ],
+                Stroke::new(1.0, Color32::GRAY),
+            );
+        }
+        let draw = |a: [f64; 2], b: [f64; 2]| {
+            let positive = a[1] + b[1] >= 0.0;
+            let color = if positive {
+                Color32::from_rgba_unmultiplied(70, 210, 160, 65)
+            } else {
+                Color32::from_rgba_unmultiplied(240, 100, 130, 65)
+            };
+            let point = |p: [f64; 2]| {
+                project([
+                    p[0] as f32,
+                    p[1].clamp(
+                        -f64::from(settings.extent[1]),
+                        f64::from(settings.extent[1]),
+                    ) as f32,
+                    0.0,
+                ])
+            };
+            painter.add(egui::Shape::convex_polygon(
+                vec![point([a[0], 0.0]), point(a), point(b), point([b[0], 0.0])],
+                color,
+                Stroke::NONE,
+            ));
+        };
+        for pair in area.points.windows(2) {
+            let [a, b] = [pair[0], pair[1]];
+            if a[1].signum() != b[1].signum() && a[1] != 0.0 && b[1] != 0.0 {
+                let t = a[1].abs() / (a[1].abs() + b[1].abs());
+                let zero = [a[0] + t * (b[0] - a[0]), 0.0];
+                draw(a, zero);
+                draw(zero, b);
+            } else {
+                draw(a, b);
+            }
+        }
     }
     for (i, pair) in geometry.lines.iter().enumerate() {
         let t = i as f32 / geometry.lines.len().max(1) as f32;
@@ -272,7 +322,15 @@ mod tests {
                 ..Default::default()
             };
             let mut output = ctx.run_ui(input, |ui| {
-                let result = canvas(ui, &geometry, &mut camera, 200.0, Some(settings), source);
+                let result = canvas(
+                    ui,
+                    &geometry,
+                    &mut camera,
+                    200.0,
+                    Some(settings),
+                    source,
+                    None,
+                );
                 rect = result.rect;
                 assert_eq!(result.selected.is_some(), x.is_some());
                 match (x, source, result.tangent) {
@@ -327,6 +385,7 @@ mod tests {
                         &mut camera,
                         200.0,
                         Some(CurveSampling::default()),
+                        None,
                         None,
                     );
                     rect = output.rect;
