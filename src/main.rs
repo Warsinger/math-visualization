@@ -27,7 +27,6 @@ struct Playground {
     plot_mode: PlotMode,
     curve_sampling: CurveSampling,
     tangent_enabled: bool,
-    tangent_x: f64,
 }
 
 impl Default for Playground {
@@ -46,7 +45,6 @@ impl Default for Playground {
             plot_mode: PlotMode::Auto,
             curve_sampling: CurveSampling::default(),
             tangent_enabled: false,
-            tangent_x: 0.0,
         }
     }
 }
@@ -288,7 +286,7 @@ impl Playground {
                 ui.label("Sampling can miss thin features, singularities and even roots; discontinuities can mislead.");
             });
             ui.separator();
-            let canvas_height = (ui.available_height() - 190.0).max(120.0);
+            let canvas_height = (ui.available_height() - 210.0).max(120.0);
             let mut inspected_point = None;
             let mut inspection_equation = None;
             let mut tangent = None;
@@ -298,7 +296,6 @@ impl Playground {
                     ui.add_enabled_ui(self.pending.is_none(), |ui| {
                         if let Some(curve)=&self.scene.curve {
                             let source=curve.source.clone();
-                            let applied_extent = f64::from(curve.sampling.extent[0]);
                             ui.heading("Selected · 2D curve");
                             for (axis,extent) in ["X ±","Y ±"].into_iter().zip(&mut self.curve_sampling.extent) {
                                 ui.add(egui::Slider::new(extent,0.1..=20.0).text(axis));
@@ -314,17 +311,7 @@ impl Playground {
                             ui.checkbox(&mut self.tangent_enabled, "Explore tangent");
                             if self.tangent_enabled {
                                 if math_playground::expression::Equation::explicit_y(&source).is_ok() {
-                                    let extent = applied_extent;
-                                    self.tangent_x = self.tangent_x.clamp(-extent, extent);
-                                    ui.add(egui::Slider::new(&mut self.tangent_x, -extent..=extent).text("Point x"));
-                                    match math_playground::derivative::tangent(&source, self.tangent_x) {
-                                        Ok(value) => {
-                                            ui.label(format!("Point ({:.4}, {:.4})", value.x, value.y));
-                                            ui.label(format!("Numerical f'(x) ≈ {:.6}", value.slope));
-                                            tangent = Some(value);
-                                        }
-                                        Err(error) => { ui.label(error); }
-                                    }
+                                    ui.label("Hover along the curve to explore the tangent at the inspected point.");
                                     ui.small("One-sided finite differences; convergence is approximate, not symbolic proof.");
                                 } else { ui.label("Tangent exploration requires explicit y=f(x)."); }
                             }
@@ -372,10 +359,21 @@ impl Playground {
                 } else if let Some(surface) = &self.scene.surface {
                     math_playground::expression::Equation::parse(&surface.source).ok()
                 } else { None };
-                (canvas_rect,inspected_point)=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling), tangent);
+                let tangent_source = if self.tangent_enabled { self.scene.curve.as_ref().map(|curve|curve.source.as_str()) } else { None };
+                let output=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling), tangent_source);
+                canvas_rect=output.rect;
+                inspected_point=output.selected;
+                tangent=output.tangent;
             });
-            ui.allocate_ui(egui::vec2(ui.available_width(), 65.0), |ui| {
+            ui.allocate_ui(egui::vec2(ui.available_width(), 85.0), |ui| {
                 view::inspection_readout(ui, inspected_point, inspection_equation.as_ref());
+                if self.tangent_enabled && self.scene.curve.is_some() {
+                    match &tangent {
+                        Some(Ok(value)) => { ui.label(format!("Numerical f'(x) ≈ {:.6} at the inspected x",value.slope)); }
+                        Some(Err(error)) => { ui.label(error); }
+                        None => { ui.label("Tangent: hover near the curve to select a point."); }
+                    }
+                }
             });
             ui.separator();
             if let Some(curve)=&self.scene.curve {

@@ -61,14 +61,20 @@ impl Camera {
     }
 }
 
+pub struct CanvasOutput {
+    pub rect: egui::Rect,
+    pub selected: Option<[f32; 3]>,
+    pub tangent: Option<Result<math_playground::derivative::Tangent, String>>,
+}
+
 pub fn canvas(
     ui: &mut egui::Ui,
     geometry: &Geometry,
     camera: &mut Camera,
     height: f32,
     curve: Option<CurveSampling>,
-    tangent: Option<math_playground::derivative::Tangent>,
-) -> (egui::Rect, Option<[f32; 3]>) {
+    tangent_source: Option<&str>,
+) -> CanvasOutput {
     let (response, painter) = ui.allocate_painter(
         egui::vec2(ui.available_width().max(50.0), height),
         egui::Sense::drag(),
@@ -182,17 +188,13 @@ pub fn canvas(
     if let Some(point) = selected {
         painter.circle_filled(project(point), 4.0, Color32::YELLOW);
     }
-    if let (Some(tangent), Some(settings)) = (tangent, curve) {
-        if let Some(line) = tangent.segment(settings.extent) {
-            painter.line_segment(line.map(project), Stroke::new(2.0, Color32::YELLOW));
-        }
-        if tangent.y.abs() <= f64::from(settings.extent[1]) {
-            painter.circle_filled(
-                project([tangent.x as f32, tangent.y as f32, 0.0]),
-                4.0,
-                Color32::YELLOW,
-            );
-        }
+    let tangent = selected
+        .zip(tangent_source)
+        .map(|(point, source)| math_playground::derivative::tangent(source, f64::from(point[0])));
+    if let (Some(Ok(tangent)), Some(settings)) = (&tangent, curve)
+        && let Some(line) = tangent.segment(settings.extent)
+    {
+        painter.line_segment(line.map(project), Stroke::new(2.0, Color32::YELLOW));
     }
     painter.text(
         rect.left_top() + egui::vec2(14.0, 14.0),
@@ -205,7 +207,11 @@ pub fn canvas(
         egui::FontId::proportional(14.0),
         Color32::GRAY,
     );
-    (rect, selected)
+    CanvasOutput {
+        rect,
+        selected,
+        tangent,
+    }
 }
 
 /// Ordinary layout content: immediate and independent of tooltip timers.
@@ -232,6 +238,57 @@ pub fn inspection_readout(ui: &mut egui::Ui, point: Option<[f32; 3]>, equation: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tangent_follows_the_same_hover_point_and_clears_when_inactive() {
+        let ctx = egui::Context::default();
+        let geometry = Geometry {
+            lines: vec![
+                [[-1.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
+                [[0.0, 0.0, 0.0], [1.0, 1.0, 0.0]],
+            ],
+            bound: 2.0,
+            ..Default::default()
+        };
+        let mut camera = Camera::default();
+        let settings = CurveSampling::default();
+        let mut rect = egui::Rect::NOTHING;
+        for (x, source) in [
+            (None, None),
+            (Some(-0.5), Some("x^2")),
+            (Some(0.5), Some("x^2")),
+            (Some(0.5), None),
+            (None, Some("x^2")),
+            (Some(0.0), Some("0.00001*(x^2)^0.5")),
+        ] {
+            let pointer = x.map_or(Pos2::new(799.0, 599.0), |x: f32| {
+                camera.project_2d([x, x.abs(), 0.0], rect.center(), 17.0)
+            });
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                events: vec![egui::Event::PointerMoved(pointer)],
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                let result = canvas(ui, &geometry, &mut camera, 200.0, Some(settings), source);
+                rect = result.rect;
+                assert_eq!(result.selected.is_some(), x.is_some());
+                match (x, source, result.tangent) {
+                    (Some(x), Some("x^2"), Some(Ok(tangent))) => {
+                        assert_eq!(tangent.x, f64::from(result.selected.unwrap()[0]));
+                        assert!((tangent.x - f64::from(x)).abs() < 1e-4);
+                        assert!((tangent.slope - 2.0 * f64::from(x)).abs() < 1e-4);
+                    }
+                    (Some(0.0), Some(_), Some(Err(_))) => {}
+                    (None, _, None) | (_, None, None) => {}
+                    _ => panic!("unexpected tangent state"),
+                }
+            });
+            output.textures_delta.clear();
+        }
+    }
     #[test]
     fn hover_readout_is_visible_immediately_without_tooltip_delay() {
         for (source, expected) in [
@@ -264,7 +321,7 @@ mod tests {
                     ..Default::default()
                 };
                 let mut output = ctx.run_ui(input, |ui| {
-                    (rect, selected) = canvas(
+                    let output = canvas(
                         ui,
                         &geometry,
                         &mut camera,
@@ -272,6 +329,8 @@ mod tests {
                         Some(CurveSampling::default()),
                         None,
                     );
+                    rect = output.rect;
+                    selected = output.selected;
                     inspection_readout(ui, selected, equation.as_ref());
                 });
                 output.textures_delta.clear();
