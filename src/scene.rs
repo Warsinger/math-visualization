@@ -6,7 +6,7 @@ use crate::{
 use std::f32::consts::TAU;
 
 /// One selected helix. Height is total height; pitch is height / turns.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Helix {
     pub radius: f32,
     pub height: f32,
