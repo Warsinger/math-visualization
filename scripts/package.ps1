@@ -12,6 +12,14 @@ $executable = if ($Target -eq 'x86_64-pc-windows-msvc') { 'math-playground.exe' 
 $binary = Join-Path $projectRoot "target/$Target/release/$executable"
 if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) { throw "Missing release executable: $binary" }
 if ((Get-Item -LiteralPath $binary).Length -eq 0) { throw 'Release executable is empty.' }
+if ($Target -eq 'x86_64-pc-windows-msvc') {
+    # Enforce GUI subsystem in the actual executable being distributed.
+    $bytes = [IO.File]::ReadAllBytes($binary)
+    $pe = [BitConverter]::ToInt32($bytes, 0x3c)
+    if ([BitConverter]::ToUInt32($bytes, $pe) -ne 0x00004550) { throw 'Invalid PE signature.' }
+    $subsystem = [BitConverter]::ToUInt16($bytes, $pe + 24 + 68)
+    if ($subsystem -ne 2) { throw "Windows package must use GUI subsystem (2), got $subsystem." }
+}
 $dist = Join-Path $projectRoot 'dist'
 # A fresh staging directory avoids including stale files on repeated local runs.
 $stage = Join-Path $dist ([guid]::NewGuid().ToString())

@@ -1,3 +1,6 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
+mod startup;
 mod view;
 
 use eframe::egui;
@@ -360,7 +363,17 @@ impl eframe::App for Playground {
     }
 }
 
-fn main() -> eframe::Result {
+fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            startup::report(&error.to_string());
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1150.0, 760.0])

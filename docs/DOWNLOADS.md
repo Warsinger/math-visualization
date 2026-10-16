@@ -27,3 +27,12 @@ The Rust cache restores dependency downloads and compiled dependencies per targe
 Packaging verifies exact archive contents and writes a SHA-256 checksum before uploading. A failed platform does not cancel the other platform jobs; only verified packages are uploaded by that job. This scope covers downloadable CI artifacts. Release publishing, signing, installers, browser/WebAssembly builds, and hosting remain separate work.
 
 The workflow uses checkout v6 and upload-artifact v6, which run on Node.js 24, addressing the previous checkout v4 Node.js 20 deprecation warning.
+# Windows launch diagnostics
+
+Packaged Windows builds use the GUI subsystem and do not open an extra console.
+Development builds retain their console. If the graphical app cannot start, it
+shows a Windows error dialog and attempts to write the latest failure to
+`%LOCALAPPDATA%\MathPlayground\startup-error.log`. The dialog reports whether the
+log was saved. The previous startup error is replaced; successful launches leave
+that diagnostic file available. Logs stay local. Code signing and SmartScreen
+reputation are tracked separately.
