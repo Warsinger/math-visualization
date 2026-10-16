@@ -4,6 +4,8 @@ These user-supplied screenshots show the request field, selected-object controls
 
 ## Enter a plot or shape
 
+**Auto** detects 2D versus 3D from the equation (z selects 3D); **Input mode** provides optional 2D/3D overrides. Try `x^2+y^2=1` for a circle. For a flat parabola, enter `x^2` or `y=x^2`; drag to pan, scroll to zoom, and Apply sampling after changing X/Y bounds or sample count. The mode selector affects the next submission, not the currently displayed geometry. In 3D, `plot y=x^2` remains a cylinder. The screenshots below predate the mode selector and illustrate the 3D interface.
+
 Type a request in the field at the top, then press Enter or Apply. Try `create a helix with five turns`, `plot x^2-y^2-z^2=0`, or `plot sin(x)=z`. Feedback below the field reports completion or an error. Helix controls edit radius, height, and turns; implicit-surface controls set the sampling domain and resolution.
 
 ![Default five-turn helix with radius, height, turns, and camera controls](images/ui-default-five-turn-helix.png)

@@ -1,5 +1,13 @@
 # Mathematical playground — initial project specification
 
+## Implemented extension: automatic dimension and planar equations
+
+Issue #7 supports general planar F(x,y)=0 contours, including circles, ellipses and vertical lines. Auto is the default: parsed references to z choose 3D; otherwise choose 2D. Optional overrides preserve both interpretations of y=x^2 (parabola versus cylinder). Input may omit the plot prefix. A bare expression using x only (or a constant) is shorthand for y=f(x); expressions using y without an equality mean F(x,y)=0. Mode selection affects the next submitted plot, not existing geometry. Forced 2D rejects z. Auto remains selected across ordinary submissions; saved history explicitly restores the plot dimension. Helices remain 3D.
+
+src/curve.rs reuses the evaluator and Geometry to produce segments at z=0. Explicit functions retain uniform interval sampling and midpoint heuristics/clipping. General planar equations use marching triangles with a consistent cell diagonal, scaled edge interpolation and skipped triangles adjacent to undefined/nonfinite values. The existing 64–4096 detail parameter maps to twice its integer square root in grid cells/axis, bounded 16–128 (default 64). At most 16641 evaluations and 32768 output segments keep work bounded. X/Y half-extents remain 0.1–20. Thin features, even roots, singularities and discontinuities have the same numerical limitations as 3D sign-crossing extraction; this is not an exact solver or adaptive algorithm.
+
+The renderer uses an XY grid and equal unit scale with pan/zoom/reset; 3D retains orbit/tilt. Applied settings use the existing worker/cache/atomic scene path and Apply sampling action. History curve snapshots retain source/settings and old helix/surface variants remain compatible. Tests cover automatic and forced dimension choice, circle/ellipse/vertical-line contours, refinement, planar geometry, retained cylinders, shorthand, domains/bounds, history serialization/restoration and layout.
+
 ## Purpose
 
 Learn Rust and 3D visualization by building an approachable mathematical playground inspired by the curiosity of Numberphile curve and shape demonstrations. End users explore through typed requests and direct controls; they never need to write code. The developer learns the math and engineering underneath through small, testable milestones.

@@ -2,9 +2,10 @@ mod view;
 
 use eframe::egui;
 use math_playground::{
+    curve::CurveSampling,
     geometry::Sampling,
     history::{Outcome, Snapshot, Store, truncate},
-    scene::Scene,
+    scene::{PlotMode, Scene},
 };
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use view::Camera;
@@ -20,6 +21,8 @@ struct Playground {
     history: Store,
     history_open: bool,
     pending_history_request: Option<String>,
+    plot_mode: PlotMode,
+    curve_sampling: CurveSampling,
 }
 
 impl Default for Playground {
@@ -35,11 +38,22 @@ impl Default for Playground {
             history: Store::open(None),
             history_open: false,
             pending_history_request: None,
+            plot_mode: PlotMode::Auto,
+            curve_sampling: CurveSampling::default(),
         }
     }
 }
 
 impl Playground {
+    fn restore_snapshot(&mut self, snapshot: Snapshot) {
+        self.plot_mode = if matches!(snapshot, Snapshot::Curve { .. }) {
+            PlotMode::TwoD
+        } else {
+            PlotMode::ThreeD
+        };
+        self.request = snapshot.request();
+        self.start(move |scene| snapshot.restore(scene));
+    }
     fn start(&mut self, work: impl FnOnce(&mut Scene) -> Result<(), String> + Send + 'static) {
         let mut candidate = self.scene.clone();
         let (tx, rx) = mpsc::channel();
@@ -59,8 +73,24 @@ impl Playground {
                 match result {
                     Ok(scene) => {
                         self.scene = scene;
+                        if self.plot_mode != PlotMode::Auto {
+                            self.plot_mode = if self.scene.curve.is_some() {
+                                PlotMode::TwoD
+                            } else {
+                                PlotMode::ThreeD
+                            };
+                        }
+                        if let Some(c) = &self.scene.curve {
+                            self.curve_sampling = c.sampling;
+                        }
                         self.error = false;
-                        self.feedback = if self.scene.geometry.lines.is_empty() {
+                        self.feedback = if self.scene.curve.is_some() {
+                            format!(
+                                "2D plot: {} segments; {} sampling regions skipped. Empty output does not prove no real values exist.",
+                                self.scene.geometry.lines.len(),
+                                self.scene.geometry.skipped_tetrahedra
+                            )
+                        } else if self.scene.geometry.lines.is_empty() {
                             format!(
                                 "No crossings found; {} tetrahedra skipped. This does not prove there are no real solutions.",
                                 self.scene.geometry.skipped_tetrahedra
@@ -158,6 +188,7 @@ impl Playground {
                                 match &entry.outcome {
                                     Outcome::Success { snapshot } => {
                                         ui.colored_label(egui::Color32::LIGHT_GREEN, "Succeeded");
+                                        ui.small(if matches!(snapshot,Snapshot::Curve {..}){"2D curve"}else{"3D plot"});
                                         if let Snapshot::Surface { sampling, .. } = snapshot {
                                             ui.small(format!(
                                                 "Bounds ±{:?}; {} cells/axis",
@@ -169,6 +200,7 @@ impl Playground {
                                                 restore = Some(snapshot.clone());
                                             }
                                             if ui.button("Edit/retry").clicked() {
+                                                self.plot_mode=if matches!(snapshot,Snapshot::Curve {..}){PlotMode::TwoD}else{PlotMode::ThreeD};
                                                 retry = Some(snapshot.request());
                                             }
                                         });
@@ -191,8 +223,7 @@ impl Playground {
             self.request = request;
         }
         if let Some(snapshot) = restore {
-            self.request = snapshot.request();
-            self.start(move |scene| snapshot.restore(scene));
+            self.restore_snapshot(snapshot);
         }
         Some(panel.response.rect)
     }
@@ -209,7 +240,16 @@ impl Playground {
         let mut canvas_rect = egui::Rect::NOTHING;
         egui::CentralPanel::default().show(ui, |ui| {
             ui.heading("Mathematical playground");
-            ui.label("Helices and numerical implicit surfaces in Cartesian x, y, z.");
+            ui.label("Cartesian curves, helices and implicit surfaces.");
+            ui.add_enabled_ui(self.pending.is_none(),|ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Input mode:");
+                    ui.selectable_value(&mut self.plot_mode,PlotMode::Auto,"Auto");
+                    ui.selectable_value(&mut self.plot_mode,PlotMode::TwoD,"2D · XY");
+                    ui.selectable_value(&mut self.plot_mode,PlotMode::ThreeD,"3D · implicit");
+                });
+                ui.small("Auto: equations with z use 3D; otherwise 2D. Bare x^2 means y=x^2. Overrides apply on the next request. Helices are 3D.");
+            });
             ui.separator();
             ui.add_enabled_ui(self.pending.is_none(), |ui| {
                 ui.horizontal(|ui| {
@@ -219,8 +259,9 @@ impl Playground {
                     let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if ui.button("Apply").clicked() || enter {
                         let request = self.request.clone();
+                        let mode=self.plot_mode;
                         self.pending_history_request=Some(request.clone());
-                        self.start(move |scene| scene.request(&request));
+                        self.start(move |scene| scene.request_in_mode(&request,mode));
                     }
                 });
             });
@@ -244,7 +285,20 @@ impl Playground {
                 ui.vertical(|ui| {
                     ui.set_width(255.0);
                     ui.add_enabled_ui(self.pending.is_none(), |ui| {
-                        if let Some(surface) = &self.scene.surface {
+                        if let Some(curve)=&self.scene.curve {
+                            let source=curve.source.clone();
+                            ui.heading("Selected · 2D curve");
+                            for (axis,extent) in ["X ±","Y ±"].into_iter().zip(&mut self.curve_sampling.extent) {
+                                ui.add(egui::Slider::new(extent,0.1..=20.0).text(axis));
+                            }
+                            ui.add(egui::Slider::new(&mut self.curve_sampling.samples,64..=4096).text("Samples"));
+                            ui.label(format!("Apply sampling to rebuild. Explicit functions use sample intervals; implicit curves use a {}×{} grid.",math_playground::curve::grid_cells(self.curve_sampling),math_playground::curve::grid_cells(self.curve_sampling)));
+                            if ui.button("Apply sampling").clicked() {
+                                let settings=self.curve_sampling;
+                                self.pending_history_request=Some(format!("plot {source}"));
+                                self.start(move |scene|scene.plot_curve(&source,settings));
+                            }
+                        } else if let Some(surface) = &self.scene.surface {
                             let source = surface.source.clone();
                             ui.heading("Selected · Implicit surface");
                             for (axis, extent) in ["X", "Y", "Z"].into_iter().zip(&mut self.sampling.extent) {
@@ -276,14 +330,19 @@ impl Playground {
                     ui.separator();
                     if ui.button("Reset view").clicked() { self.camera = Camera::default(); }
                     ui.add(egui::Slider::new(&mut self.camera.zoom, 0.3..=4.0).text("Zoom"));
-                    ui.add(egui::Slider::new(&mut self.camera.yaw, -std::f32::consts::PI..=std::f32::consts::PI).text("Orbit"));
-                    ui.add(egui::Slider::new(&mut self.camera.tilt, -1.5..=1.5).text("Tilt"));
-                    ui.label("Drag to rotate. Scroll over canvas to zoom.");
+                    if self.scene.curve.is_none() {
+                        ui.add(egui::Slider::new(&mut self.camera.yaw, -std::f32::consts::PI..=std::f32::consts::PI).text("Orbit"));
+                        ui.add(egui::Slider::new(&mut self.camera.tilt, -1.5..=1.5).text("Tilt"));
+                    }
+                    ui.label(if self.scene.curve.is_some(){"Drag to pan. Scroll to zoom."}else{"Drag to rotate. Scroll to zoom."});
                 });
-                canvas_rect=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height);
+                canvas_rect=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling));
             });
             ui.separator();
-            if let Some(surface) = &self.scene.surface {
+            if let Some(curve)=&self.scene.curve {
+                ui.label(format!("2D Cartesian: {}",curve.source));
+                ui.label("Uniform numerical samples; undefined/sharp intervals may be skipped, and discontinuities can still mislead.");
+            } else if let Some(surface) = &self.scene.surface {
                 ui.label(format!("Equation: {}", surface.source));
                 ui.label("Approximate wireframe; no depth occlusion. One equation generally defines a surface, not a space curve.");
             } else {
@@ -326,10 +385,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn both_scene_types_generate_finite_headless_ui_shapes() {
+    fn all_scene_types_generate_finite_headless_ui_shapes() {
         let mut app = Playground::default();
-        for request in ["create a helix with five turns", "plot x^2-y^2-z^2=0"] {
-            app.scene.request(request).unwrap();
+        for (request, mode) in [
+            ("create a helix with five turns", PlotMode::ThreeD),
+            ("plot x^2-y^2-z^2=0", PlotMode::ThreeD),
+            ("x^2", PlotMode::TwoD),
+        ] {
+            app.scene.request_in_mode(request, mode).unwrap();
+            app.plot_mode = mode;
             let ctx = egui::Context::default();
             let input = egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
@@ -425,36 +489,71 @@ mod tests {
     #[test]
     fn docked_history_never_overlaps_canvas_and_hiding_restores_width() {
         for size in [egui::vec2(950.0, 760.0), egui::vec2(1150.0, 760.0)] {
-            let mut app = Playground {
-                history_open: true,
-                ..Default::default()
-            };
-            let ctx = egui::Context::default();
-            let input = || egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
-                ..Default::default()
-            };
-            let mut layout = (egui::Rect::NOTHING, None);
-            for _ in 0..2 {
+            for mode in [PlotMode::TwoD, PlotMode::ThreeD] {
+                let mut app = Playground {
+                    history_open: true,
+                    ..Default::default()
+                };
+                if mode == PlotMode::TwoD {
+                    app.scene
+                        .plot_curve("x^2", CurveSampling::default())
+                        .unwrap();
+                    app.plot_mode = mode;
+                }
+                let ctx = egui::Context::default();
+                let input = || egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    ..Default::default()
+                };
+                let mut layout = (egui::Rect::NOTHING, None);
+                for _ in 0..2 {
+                    let mut output = ctx.run_ui(input(), |ui| {
+                        layout = app.draw(ui);
+                    });
+                    output.textures_delta.clear();
+                }
+                let (canvas, history) = layout;
+                let history = history.expect("history is docked");
+                assert!(
+                    !canvas.intersects(history),
+                    "{canvas:?} overlaps {history:?}"
+                );
+                assert!(canvas.width() > 250.0);
+                app.history_open = false;
                 let mut output = ctx.run_ui(input(), |ui| {
                     layout = app.draw(ui);
                 });
                 output.textures_delta.clear();
+                assert!(layout.1.is_none());
+                assert!(layout.0.width() > canvas.width() + 200.0);
             }
-            let (canvas, history) = layout;
-            let history = history.expect("history is docked");
-            assert!(
-                !canvas.intersects(history),
-                "{canvas:?} overlaps {history:?}"
-            );
-            assert!(canvas.width() > 250.0);
-            app.history_open = false;
-            let mut output = ctx.run_ui(input(), |ui| {
-                layout = app.draw(ui);
-            });
-            output.textures_delta.clear();
-            assert!(layout.1.is_none());
-            assert!(layout.0.width() > canvas.width() + 200.0);
         }
+    }
+
+    #[test]
+    fn restored_curve_updates_input_mode_and_controls_without_adding_history() {
+        let mut app = Playground::default();
+        let sampling = CurveSampling {
+            extent: [3.0, 9.0],
+            samples: 128,
+        };
+        let snapshot = Snapshot::Curve {
+            equation: "x^2".into(),
+            sampling,
+        };
+        app.restore_snapshot(snapshot);
+        let result = app
+            .pending
+            .take()
+            .unwrap()
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        let (tx, rx) = mpsc::channel();
+        tx.send(result).unwrap();
+        app.pending = Some(rx);
+        app.finish();
+        assert_eq!(app.plot_mode, PlotMode::TwoD);
+        assert_eq!(app.curve_sampling, sampling);
+        assert!(app.history.history.entries.is_empty());
     }
 }

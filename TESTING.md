@@ -1,5 +1,11 @@
 # Testing the playground
 
+## 2D Cartesian checks
+
+Automated tests cover equality of bare/shorthand/explicit/reversed parabola forms, zero Z coordinates, clipping and domains, constant functions, invalid variables/implicit forms and sampling limits, unchanged 3D cylinders, history JSON/restoration and mode/control synchronization, planar camera projection, headless drawing, and non-overlapping history layout at minimum/default sizes in both modes.
+
+Manual review: use **Auto** or select **2D · XY** and apply `x^2`, `plot y=x^2`, and `x^2=y`; verify the same flat parabola. Try `sin(x)`, `ln(x)` and `y=4`. Pan, zoom and Reset view; confirm Orbit/Tilt are absent. Edit X/Y limits and sample count, then Apply sampling. Restore the plot from History after switching to a 3D surface; verify mode and controls return. Select **3D · implicit**, apply `plot y=x^2`, and rotate its cylinder. Confirm switching the input selector without Apply leaves the current plot/view unchanged. Test `x^2+y^2=1`, `x^2/4+y^2=1` and `x=2` in Auto; verify circles/ellipses/vertical lines. Test `x^2+y^2+z^2=1` automatically uses 3D and forced 2D rejects z without changing the scene. Test `y=x^2` in Auto versus forced 3D. Inspect grid labels and the docked history at 950×760 and 1150×760. Discontinuity gaps are heuristic; do not treat `1/x` or `tan(x)` screenshots as continuity proofs.
+
 ## History checks
 
 Automated tests use isolated temporary directories or an in-memory store, never the user's real history. They cover JSON round trips, repeated replacement, the 200-entry limit, clearing, invalid/oversized/future-version input, corrupt-file preservation, unavailable/unwritable storage, UTF-8 truncation, helix/sampling restoration and exactly-once worker success/error recording. Headless drawing covers a history panel containing both outcomes. A layout regression checks that docked history does not overlap the canvas at 950×760 and 1150×760, and hiding it restores canvas width.
