@@ -146,7 +146,13 @@ pub fn canvas(
     // On narrow screens scrolling must navigate the workspace, not also zoom.
     // The Zoom control remains available for touch and compact layouts.
     if response.hovered() && ui.ctx().content_rect().width() >= 900.0 {
-        let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+        let scroll = ui.input_mut(|input| {
+            let scroll = input.smooth_scroll_delta.y;
+            // ScrollArea reads this after drawing its contents. Consume only
+            // the vertical delta used by zoom so one gesture has one owner.
+            input.smooth_scroll_delta.y = 0.0;
+            scroll
+        });
         camera.zoom = (camera.zoom * (scroll * 0.002).exp()).clamp(0.3, 4.0);
     }
     // Bounding sphere keeps the initial view in frame at every rotation.

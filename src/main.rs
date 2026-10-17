@@ -656,6 +656,69 @@ fn main() {
 mod tests {
     use super::*;
     #[test]
+    fn wheel_gestures_have_one_owner_in_short_desktop_and_compact_layouts() {
+        for width in [1150.0, 390.0] {
+            let ctx = egui::Context::default();
+            let mut app = Playground::default();
+            let mut time = 0.0;
+            let mut frame = |app: &mut Playground, events: Vec<egui::Event>| {
+                time += 1.0 / 60.0;
+                let mut canvas = egui::Rect::NOTHING;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 500.0),
+                        )),
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        canvas = app.draw(ui).0;
+                    },
+                );
+                output.textures_delta.clear();
+                canvas
+            };
+            let mut before = frame(&mut app, vec![]);
+            for _ in 0..3 {
+                before = frame(&mut app, vec![]);
+            }
+            // The canvas can extend below a short viewport: hover its visible part.
+            let pointer = egui::pos2(before.center().x, before.top() + 40.0);
+            before = frame(&mut app, vec![egui::Event::PointerMoved(pointer)]);
+            let zoom = app.camera.zoom;
+            frame(
+                &mut app,
+                vec![egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    phase: egui::TouchPhase::Move,
+                    delta: egui::vec2(0.0, -100.0),
+                    modifiers: egui::Modifiers::default(),
+                }],
+            );
+            let mut after = before;
+            for _ in 0..30 {
+                after = frame(&mut app, vec![]);
+            }
+            if width >= 900.0 {
+                assert!(app.camera.zoom < zoom, "desktop wheel must zoom");
+                assert!(
+                    (after.top() - before.top()).abs() < 0.1,
+                    "desktop zoom must not scroll: {before:?} -> {after:?}"
+                );
+            } else {
+                assert_eq!(app.camera.zoom, zoom, "compact scrolling must not zoom");
+                assert!(
+                    after.top() < before.top() - 10.0,
+                    "compact wheel must scroll"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn responsive_canvas_stays_inside_phone_tablet_and_short_viewports() {
         for (width, height) in [
             (320.0, 568.0),
