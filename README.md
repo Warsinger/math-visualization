@@ -8,6 +8,8 @@ See the [UI guide with screenshots](docs/UI-GUIDE.md) for typed input, sampling 
 
 To run the same playground in a local desktop browser, see the [browser build and run guide](docs/BROWSER.md). Browser history lasts until page reload; the native app retains its existing history files.
 
+Cloudflare hosting and CI publishing are described in the [deployment guide](docs/DEPLOYMENT.md).
+
 ![App showing the default five-turn helix with typed input, selected-object controls, and a 3D canvas](docs/images/ui-default-five-turn-helix.png)
 
 Start with a five-turn helix, then explore equations and functions. The [illustrated guide](docs/UI-GUIDE.md) includes sphere and function-surface examples, plus sampling and camera instructions.

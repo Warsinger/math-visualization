@@ -1,0 +1,32 @@
+name: Clean closed PR preview
+on:
+  pull_request_target:
+    types: [closed]
+permissions:
+  contents: read
+  issues: read
+  pull-requests: write
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: cloudflare-math-playground-lifecycle
+      cancel-in-progress: false
+      queue: max
+    steps:
+      # Never check out the PR ref, download PR artifacts or run PR code here.
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Clean verified previews for this close event
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PAGES_SERIALIZED: 'true'
+        run: node scripts/pages-operation.mjs

@@ -4,12 +4,143 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy this revision to Cloudflare (main is production; other branches are previews)
+        type: boolean
+        default: false
+      preview_pr:
+        description: PR number for a preview (required when deploying a non-main branch)
+        type: string
+      pages_action:
+        description: Lifecycle operation; defaults to dry run unless apply is enabled
+        type: choice
+        default: none
+        options: [none, status-production, cleanup-preview, pause, resume, undeploy-production]
+      apply:
+        description: Apply the selected lifecycle operation
+        type: boolean
+        default: false
+      confirm:
+        description: Production confirmation must be math-playground:production
+        type: string
 permissions:
   contents: read
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  web:
+    name: Build browser app
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Install Wasm toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --target wasm32-unknown-unknown
+          rustup override set stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm32-release
+          cache-bin: 'false'
+      - uses: actions/cache@v5
+        id: bindgen
+        with:
+          path: ~/.cargo/bin/wasm-bindgen
+          key: wasm-bindgen-cli-0.2.129-linux-x64
+      - name: Install matching wasm-bindgen CLI
+        if: steps.bindgen.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
+      - name: Lint browser target
+        run: cargo clippy --locked --target wasm32-unknown-unknown -- -D warnings
+      - name: Build browser assets
+        shell: pwsh
+        run: ./scripts/build-web.ps1
+      - name: Verify JS/Wasm pairing and hosting files
+        run: node scripts/verify-web.mjs
+      - name: Test deployment lifecycle policies
+        run: node --test scripts/pages.test.mjs
+      - uses: actions/upload-artifact@v6
+        with:
+          name: browser-app
+          path: dist/web/
+          if-no-files-found: error
+          retention-days: 14
+  deploy:
+    name: Deploy browser app
+    needs: [web, verify, coverage]
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.deploy && inputs.pages_action == 'none')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: cloudflare-math-playground-lifecycle
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: read
+      actions: read
+      issues: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v7
+        with:
+          name: browser-app
+          path: dist/web
+      - name: Publish through lifecycle guard
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PAGES_SERIALIZED: 'true'
+          PREVIEW_PR: ${{ inputs.preview_pr }}
+          TARGET: ${{ github.ref == 'refs/heads/main' && 'production' || 'preview' }}
+        run: |
+          node scripts/pages.mjs publish --target "$TARGET" --pr "$PREVIEW_PR" --apply
+  pages-lifecycle:
+    name: Pages lifecycle operation
+    if: github.event_name == 'workflow_dispatch' && inputs.pages_action != 'none'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: cloudflare-math-playground-lifecycle
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: read
+      actions: read
+      issues: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Run trusted lifecycle operation
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PAGES_SERIALIZED: 'true'
+          PAGES_ACTION: ${{ inputs.pages_action }}
+          PREVIEW_PR: ${{ inputs.preview_pr }}
+          PAGES_APPLY: ${{ inputs.apply }}
+          PAGES_CONFIRM: ${{ inputs.confirm }}
+        run: node scripts/pages-operation.mjs
   coverage:
     name: Coverage (Linux debug)
     runs-on: ubuntu-24.04
