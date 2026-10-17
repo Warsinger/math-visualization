@@ -48,6 +48,15 @@ test('pagination covers all pages and fails on repeated/error pages', async () =
   await assert.rejects(collectPages(async () => ({ result: [{ id: 1 }], totalPages: 3 })), /did not advance/);
   await assert.rejects(collectPages(async () => { throw new Error('HTTP 403'); }), /403/);
 });
+test('Cloudflare default-sized pages do not truncate when total-pages metadata is absent', async () => {
+  const visited = [];
+  const all = await collectPages(async page => {
+    visited.push(page);
+    return { result: page <= 2 ? Array.from({ length: 25 }, (_, i) => ({ id: (page - 1) * 25 + i })) : [], pageSize: null };
+  });
+  assert.equal(all.length, 50);
+  assert.deepEqual(visited, [1, 2, 3]);
+});
 test('cleanup is repeatable/no-op, preserves explicitly retained deployment and uses force for aliases', async () => {
   const calls = [];
   const api = async (...args) => { calls.push(args); return null; };

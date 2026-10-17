@@ -61,14 +61,15 @@ export async function collectPages(load) {
   const values = [];
   const seen = new Set();
   for (let page = 1; page <= 10000; page++) {
-    const { result, totalPages } = await load(page);
+    const { result, totalPages, pageSize = 100 } = await load(page);
     if (!Array.isArray(result)) throw new Error('Invalid pagination response');
     for (const item of result) {
       if (seen.has(item.id ?? item.sha)) throw new Error('Pagination did not advance');
       seen.add(item.id ?? item.sha);
       values.push(item);
     }
-    if (!result.length || (totalPages !== undefined ? page >= totalPages : result.length < 100)) return values;
+    const hasTotal = Number.isInteger(totalPages) && totalPages > 0;
+    if (!result.length || (hasTotal ? page >= totalPages : pageSize !== null && result.length < pageSize)) return values;
   }
   throw new Error('Pagination limit exceeded');
 }

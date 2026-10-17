@@ -29,7 +29,7 @@ async function request(url, token, method = 'GET', body, missingOkay = false) {
 const cf = (path = '', method, body, missingOkay) => request(prefix + path, process.env.CLOUDFLARE_API_TOKEN, method, body, missingOkay);
 const gh = (path, method, body) => request(`https://api.github.com/repos/${repository}${path}`, process.env.GITHUB_TOKEN, method, body);
 const ghList = path => collectPages(async page => ({ result: await gh(`${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`) }));
-const list = () => collectPages(async page => { const data = await cf(`/deployments?per_page=100&page=${page}`); return { result: data.result, totalPages: data.result_info?.total_pages }; });
+const list = () => collectPages(async page => { const data = await cf(`/deployments?page=${page}`); return { result: data.result, totalPages: data.result_info?.total_pages, pageSize: data.result_info?.per_page ?? null }; });
 let project = (await cf()).result;
 if (project.production_branch !== 'main') throw new Error('Production branch must be main');
 let state = stateOf(project);
