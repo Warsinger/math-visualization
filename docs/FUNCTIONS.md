@@ -2,7 +2,7 @@
 
 Names are lowercase and case-sensitive. Calls require parentheses and the number
 of comma-separated arguments listed below. Arguments may be nested expressions.
-Multiplication remains explicit. `pi`/`π`, `e`, scientific numeric notation,
+Multiplication may be explicit or implicit between complete factors, such as `2sin(x)` or `log(2x,2)`; see the [input guide](UI-GUIDE.md#multiplication-in-equation-input). `pi`/`π`, `e`, scientific numeric notation,
 right-associative powers and unary-sign precedence keep their existing meanings.
 `sin(x)^-1` is an arithmetic reciprocal; use `asin(x)` for inverse sine.
 
@@ -62,4 +62,4 @@ compare `abs(x)` at zero with a smooth tangent example `sqrt(x)` at x=4.
 
 Optional `exp`, `√(...)`, and absolute-value bars are not implemented here.
 Floor/ceil/round, conditionals, general piecewise syntax and symbolic/complex
-algebra are outside this feature. Function names do not enable implicit multiplication.
+algebra are outside this feature. Function names remain whole tokens; `xsin(x)` is unknown, while `x sin(x)` is a product.

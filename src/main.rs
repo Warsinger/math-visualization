@@ -308,7 +308,10 @@ impl Playground {
                 ui.label("plot x^2 - y^2 - z^2 = 0 · plot x^2+y^2+z^2=4 · plot z-x*y");
                 ui.label("plot ln(x)=y · plot sin(x)=z · plot cos(x)=y · plot tan(x)=z");
                 ui.label("Functions: ln, log/logN, sqrt/cbrt/abs, sin/cos/tan/sec/csc/cot, asin/acos/atan/atan2, sinh/cosh/tanh/asinh/acosh/atanh, min/max/sign.");
-                ui.label("Examples: log(abs(x)+1,2), cbrt(x), atan2(y,x). Trig uses radians; multiplication is explicit. Use parentheses and commas for arguments.");
+                ui.label("Products: 2x, 2(x+1), 2sin(x), x y, 2pi or 2π. Names stay whole: use x*y, not xy; functions require parentheses, e.g. sin(x), not sin x.");
+                ui.label("Multiplication and division share precedence, left to right: 1/2x = (1/2)*x. Use 1/(2x) for a denominator product. Powers bind first: 2x^2 = 2*(x^2).");
+                ui.label("Scientific notation: 2e3 = 2000; 2e-3 = 0.002. For Euler's constant use 2*e or 2 e; 2e and 2e(x) are invalid. Put numeric coefficients first or use '*': x*2, not x 2.");
+                ui.label("Examples: log(2x,2), cbrt(x), atan2(2y,3x). Trig uses radians. Separate function arguments with commas.");
                 ui.label("Sampling can miss thin features, singularities and even roots; discontinuities can mislead.");
             });
             ui.separator();
