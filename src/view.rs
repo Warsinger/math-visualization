@@ -143,7 +143,9 @@ pub fn canvas(
             - std::f32::consts::PI;
         camera.tilt = (camera.tilt + delta.y * 0.01).clamp(-1.5, 1.5);
     }
-    if response.hovered() {
+    // On narrow screens scrolling must navigate the workspace, not also zoom.
+    // The Zoom control remains available for touch and compact layouts.
+    if response.hovered() && ui.ctx().content_rect().width() >= 900.0 {
         let scroll = ui.input(|i| i.smooth_scroll_delta.y);
         camera.zoom = (camera.zoom * (scroll * 0.002).exp()).clamp(0.3, 4.0);
     }
