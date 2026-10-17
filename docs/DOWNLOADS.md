@@ -36,11 +36,11 @@ Packaging verifies exact archive contents and writes a SHA-256 checksum before u
 The workflow uses checkout v6 and upload-artifact v6, which run on Node.js 24, addressing the previous checkout v4 Node.js 20 deprecation warning.
 # Application logs and Windows launch diagnostics
 
-Native builds append structured JSON Lines to the local data directory:
-Windows `%LOCALAPPDATA%\MathPlayground\logs\application.jsonl`, Linux
-`${XDG_DATA_HOME:-~/.local/share}/MathPlayground/logs/application.jsonl`, and
-macOS `~/Library/Application Support/MathPlayground/logs/application.jsonl`.
-Each record has an RFC3339 UTC timestamp, severity, target and structured fields
+Native builds append human-readable text logs to the local data directory:
+Windows `%LOCALAPPDATA%\MathPlayground\logs\application.log`, Linux
+`${XDG_DATA_HOME:-~/.local/share}/MathPlayground/logs/application.log`, and
+macOS `~/Library/Application Support/MathPlayground/logs/application.log`.
+Each line has an RFC3339 UTC timestamp, severity, target and named diagnostic fields
 including an `event` name. Startup, normal shutdown, geometry completion/rejection,
 worker failure and panics use the same tracing facility. Geometry failures include
 the submitted request, error/reason, input mode and sampling context. Request/error
@@ -51,8 +51,8 @@ edited parameters and error. Successful events omit request text; history conten
 and panic payloads are not dumped. Startup errors are capped at 4096 UTF-8 bytes.
 Logs stay local; share them only deliberately.
 
-The active file rotates at 2 MiB, retaining `application.jsonl.1` and `.2` (about
-6 MiB total). A record over 64 KiB is omitted rather than split into invalid JSON.
+Formatting/filtering use tracing/tracing-subscriber; rolling-file handles archive rotation and file writes. Application glue enforces cross-process locking, whole-record limits and non-panicking failure handling. The active file rotates at 2 MiB, retaining `application.log.1` and `.2` (about
+6 MiB total). A record over 64 KiB is omitted. String fields escape newlines/quotes so failed input cannot forge log entries.
 Each complete event is synchronously appended, flushed and synced; there is no
 background queue to lose on ordinary shutdown/startup failure. An OS file lock
 coordinates writers/rotation across app instances; contention or unavailable I/O
@@ -61,7 +61,7 @@ This cannot guarantee delivery during forced termination or filesystem failure.
 
 App events default to INFO; dependencies default to WARN. Set
 `MATH_PLAYGROUND_LOG=trace|debug|info|warn|error|off` to change app verbosity.
-Unknown values use INFO. The legacy `startup-error.log` is no longer written;
+Unknown values use INFO. The legacy `startup-error.log` and trial `application.jsonl` files are no longer written;
 any existing file is preserved for historical diagnostics and may be deleted manually.
 
 Windows release builds open no console. Startup failure still shows a dialog with

@@ -1,4 +1,4 @@
-//! Synchronous, bounded JSON Lines tracing for native builds.
+//! Readable, bounded native tracing using library formatting and file rotation for native builds.
 use std::{
     io::{self, Write},
     path::{Path, PathBuf},
@@ -33,10 +33,10 @@ impl GeometryContext {
         }
     }
     pub fn rejected(&self, error: &str) {
-        tracing::warn!(target:"math_playground", event="geometry_rejected", request=%self.request, request_truncated=self.request_truncated, error=%crate::truncate(error,1024), error_truncated=error.len()>1024, mode=?self.mode, surface_extent=?self.surface.extent, surface_resolution=self.surface.resolution, curve_extent=?self.curve.extent, curve_samples=self.curve.samples);
+        tracing::warn!(target:"math_playground", event="geometry_rejected", request=?self.request, request_truncated=self.request_truncated, error=?crate::truncate(error,1024), error_truncated=error.len()>1024, mode=?self.mode, surface_extent=?self.surface.extent, surface_resolution=self.surface.resolution, curve_extent=?self.curve.extent, curve_samples=self.curve.samples);
     }
     pub fn disconnected(&self) {
-        tracing::error!(target:"math_playground", event="geometry_worker_disconnected", request=%self.request, request_truncated=self.request_truncated, error="Geometry worker stopped before returning a result", mode=?self.mode, surface_extent=?self.surface.extent, surface_resolution=self.surface.resolution, curve_extent=?self.curve.extent, curve_samples=self.curve.samples);
+        tracing::error!(target:"math_playground", event="geometry_worker_disconnected", request=?self.request, request_truncated=self.request_truncated, error="Geometry worker stopped before returning a result", mode=?self.mode, surface_extent=?self.surface.extent, surface_resolution=self.surface.resolution, curve_extent=?self.curve.extent, curve_samples=self.curve.samples);
     }
 }
 
@@ -102,27 +102,24 @@ fn append(path: &Path, bytes: &[u8], limit: u64) -> io::Result<()> {
         .truncate(false)
         .open(path.with_extension("lock"))?;
     lock.try_lock().map_err(io::Error::other)?;
-    let size = path.metadata().map(|m| m.len()).unwrap_or(0);
+    // The library owns archive renames/cleanup and append mechanics. Explicit
+    // rollover propagates errors; its automatic rollover reports via eprintln!
+    // and continues after failure, which violates our non-panicking/bounded policy.
+    let mut file = rolling_file::BasicRollingFileAppender::new(
+        path,
+        rolling_file::RollingConditionBasic::new(),
+        2,
+    )?;
+    let size = path.metadata()?.len();
     if size > 0 && size + bytes.len() as u64 > limit {
-        let oldest = path.with_extension("jsonl.2");
-        match std::fs::remove_file(&oldest) {
-            Ok(()) => {}
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e),
-        }
-        let previous = path.with_extension("jsonl.1");
-        if previous.exists() {
-            std::fs::rename(&previous, &oldest)?;
-        }
-        std::fs::rename(path, previous)?;
+        file.rollover()?;
     }
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
     file.write_all(bytes)?;
     file.flush()?;
-    file.sync_data()
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)?
+        .sync_data()
 }
 pub struct Record {
     log: Log,
@@ -167,7 +164,7 @@ impl<'a> MakeWriter<'a> for Log {
 pub fn init() -> Log {
     let log = Log::new(directories::BaseDirs::new().map(|b| {
         b.data_local_dir()
-            .join("MathPlayground/logs/application.jsonl")
+            .join("MathPlayground/logs/application.log")
     }));
     let level = match std::env::var("MATH_PLAYGROUND_LOG").as_deref() {
         Ok("trace") => LevelFilter::TRACE,
@@ -181,7 +178,6 @@ pub fn init() -> Log {
         .with_default(LevelFilter::WARN)
         .with_target("math_playground", level);
     let layer = tracing_subscriber::fmt::layer()
-        .json()
         .with_ansi(false)
         .with_writer(log.clone());
     if let Err(e) = tracing_subscriber::registry()
@@ -209,9 +205,8 @@ mod tests {
     #[test]
     fn failure_records_include_bounded_request_error_and_sampling_context() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("application.jsonl");
+        let path = dir.path().join("application.log");
         let subscriber = tracing_subscriber::fmt()
-            .json()
             .with_ansi(false)
             .with_writer(Log::new(Some(path.clone())))
             .finish();
@@ -233,26 +228,16 @@ mod tests {
             context.rejected(&"x".repeat(2000));
         });
         let text = std::fs::read_to_string(path).unwrap();
-        let rows: Vec<serde_json::Value> = text
-            .lines()
-            .map(|s| serde_json::from_str(s).unwrap())
-            .collect();
+        let rows: Vec<_> = text.lines().collect();
         assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0]["fields"]["request"], "plot 2πx + \"bad\"\n");
-        assert_eq!(rows[0]["fields"]["error"], "Unknown name 'bad'");
-        assert_eq!(rows[0]["fields"]["surface_resolution"], 24);
-        assert_eq!(rows[1]["fields"]["event"], "geometry_worker_disconnected");
-        assert_eq!(rows[2]["fields"]["request_truncated"], true);
-        assert_eq!(rows[2]["fields"]["error_truncated"], true);
-        assert!(
-            rows[2]["fields"]["request"]
-                .as_str()
-                .unwrap()
-                .chars()
-                .count()
-                <= 1025
-        );
-        assert!(rows[2]["fields"]["error"].as_str().unwrap().chars().count() <= 1025);
+        assert!(!rows[0].starts_with('{'));
+        assert!(rows[0].contains(r#"request="plot 2πx + \"bad\"\n""#));
+        assert!(rows[0].contains("Unknown name 'bad'"));
+        assert!(rows[0].contains("surface_resolution=24"));
+        assert!(rows[1].contains("geometry_worker_disconnected"));
+        assert!(rows[2].contains("request_truncated=true"));
+        assert!(rows[2].contains("error_truncated=true"));
+        assert!(rows[2].len() < 4096);
     }
     #[test]
     fn failed_fallback_writer_does_not_panic() {
@@ -274,7 +259,7 @@ mod tests {
     #[test]
     fn contended_log_lock_is_nonfatal_and_later_events_recover() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("application.jsonl");
+        let path = dir.path().join("application.log");
         let lock = std::fs::OpenOptions::new()
             .create(true)
             .read(true)
@@ -298,10 +283,9 @@ mod tests {
     #[test]
     fn structured_records_append_and_preserve_utc_timestamps() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("logs/application.jsonl");
+        let path = dir.path().join("logs/application.log");
         let log = Log::new(Some(path.clone()));
         let subscriber = tracing_subscriber::fmt()
-            .json()
             .with_ansi(false)
             .with_writer(log)
             .finish();
@@ -310,34 +294,30 @@ mod tests {
             tracing::error!(event = "second", reason = "failure\nwith newline");
         });
         let text = std::fs::read_to_string(path).unwrap();
-        let rows: Vec<serde_json::Value> = text
-            .lines()
-            .map(|l| serde_json::from_str(l).unwrap())
-            .collect();
+        let rows: Vec<_> = text.lines().collect();
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0]["fields"]["count"], 3);
-        assert_eq!(rows[1]["level"], "ERROR");
+        assert!(rows[0].contains("INFO") && rows[0].contains("count=3"));
+        assert!(rows[1].contains("ERROR") && rows[1].contains(r"failure\nwith newline"));
         for row in rows {
-            let timestamp = row["timestamp"].as_str().unwrap();
+            let timestamp = row.split_whitespace().next().unwrap();
             assert!(timestamp.ends_with('Z'));
             assert!(chrono::DateTime::parse_from_rfc3339(timestamp).is_ok());
-            assert!(row["target"].is_string());
         }
     }
     #[test]
     fn rotation_retains_two_archives_and_io_failure_is_reported() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("application.jsonl");
+        let path = dir.path().join("application.log");
         for i in 0..6 {
             append(&path, format!("{i}\n").as_bytes(), 3).unwrap();
         }
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "5\n");
         assert_eq!(
-            std::fs::read_to_string(path.with_extension("jsonl.1")).unwrap(),
+            std::fs::read_to_string(path.with_extension("log.1")).unwrap(),
             "4\n"
         );
         assert_eq!(
-            std::fs::read_to_string(path.with_extension("jsonl.2")).unwrap(),
+            std::fs::read_to_string(path.with_extension("log.2")).unwrap(),
             "3\n"
         );
         let log = Log::new(Some(dir.path().to_owned()));
