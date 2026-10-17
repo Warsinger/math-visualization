@@ -10,6 +10,36 @@ use tracing_subscriber::{
 const LIMIT: u64 = 2 * 1024 * 1024;
 const RECORD_LIMIT: usize = 64 * 1024;
 
+pub struct GeometryContext {
+    pub request: String,
+    request_truncated: bool,
+    mode: math_playground::scene::PlotMode,
+    surface: math_playground::geometry::Sampling,
+    curve: math_playground::curve::CurveSampling,
+}
+impl GeometryContext {
+    pub fn new(
+        request: &str,
+        mode: math_playground::scene::PlotMode,
+        surface: math_playground::geometry::Sampling,
+        curve: math_playground::curve::CurveSampling,
+    ) -> Self {
+        Self {
+            request: crate::truncate(request, 1024),
+            request_truncated: request.len() > 1024,
+            mode,
+            surface,
+            curve,
+        }
+    }
+    pub fn rejected(&self, error: &str) {
+        tracing::warn!(target:"math_playground", event="geometry_rejected", request=%self.request, request_truncated=self.request_truncated, error=%crate::truncate(error,1024), error_truncated=error.len()>1024, mode=?self.mode, surface_extent=?self.surface.extent, surface_resolution=self.surface.resolution, curve_extent=?self.curve.extent, curve_samples=self.curve.samples);
+    }
+    pub fn disconnected(&self) {
+        tracing::error!(target:"math_playground", event="geometry_worker_disconnected", request=%self.request, request_truncated=self.request_truncated, error="Geometry worker stopped before returning a result", mode=?self.mode, surface_extent=?self.surface.extent, surface_resolution=self.surface.resolution, curve_extent=?self.curve.extent, curve_samples=self.curve.samples);
+    }
+}
+
 fn write_diagnostic(writer: &mut impl Write, message: &str) {
     // Unlike eprintln!, a failed stderr write must never panic, especially
     // when this fallback is reached from Record::drop or the panic hook.
@@ -176,6 +206,54 @@ pub fn init() -> Log {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn failure_records_include_bounded_request_error_and_sampling_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("application.jsonl");
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_ansi(false)
+            .with_writer(Log::new(Some(path.clone())))
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            let context = GeometryContext::new(
+                "plot 2πx + \"bad\"\n",
+                math_playground::scene::PlotMode::Auto,
+                Default::default(),
+                Default::default(),
+            );
+            context.rejected("Unknown name 'bad'");
+            context.disconnected();
+            let context = GeometryContext::new(
+                &"π".repeat(2000),
+                math_playground::scene::PlotMode::ThreeD,
+                Default::default(),
+                Default::default(),
+            );
+            context.rejected(&"x".repeat(2000));
+        });
+        let text = std::fs::read_to_string(path).unwrap();
+        let rows: Vec<serde_json::Value> = text
+            .lines()
+            .map(|s| serde_json::from_str(s).unwrap())
+            .collect();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0]["fields"]["request"], "plot 2πx + \"bad\"\n");
+        assert_eq!(rows[0]["fields"]["error"], "Unknown name 'bad'");
+        assert_eq!(rows[0]["fields"]["surface_resolution"], 24);
+        assert_eq!(rows[1]["fields"]["event"], "geometry_worker_disconnected");
+        assert_eq!(rows[2]["fields"]["request_truncated"], true);
+        assert_eq!(rows[2]["fields"]["error_truncated"], true);
+        assert!(
+            rows[2]["fields"]["request"]
+                .as_str()
+                .unwrap()
+                .chars()
+                .count()
+                <= 1025
+        );
+        assert!(rows[2]["fields"]["error"].as_str().unwrap().chars().count() <= 1025);
+    }
     #[test]
     fn failed_fallback_writer_does_not_panic() {
         struct Broken;

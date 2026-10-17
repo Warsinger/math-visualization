@@ -34,6 +34,8 @@ struct Playground {
     #[cfg(not(target_arch = "wasm32"))]
     layout_checked: bool,
     pending_history_request: Option<String>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pending_diagnostics: Option<logging::GeometryContext>,
     plot_mode: PlotMode,
     curve_sampling: CurveSampling,
     tangent_enabled: bool,
@@ -63,6 +65,8 @@ impl Default for Playground {
             #[cfg(not(target_arch = "wasm32"))]
             layout_checked: false,
             pending_history_request: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            pending_diagnostics: None,
             plot_mode: PlotMode::Auto,
             curve_sampling: CurveSampling::default(),
             tangent_enabled: false,
@@ -86,9 +90,45 @@ impl Playground {
             PlotMode::ThreeD
         };
         self.request = snapshot.request();
+        #[cfg(not(target_arch = "wasm32"))]
+        let diagnostics = match &snapshot {
+            Snapshot::Surface { sampling, .. } => logging::GeometryContext::new(
+                &self.request,
+                self.plot_mode,
+                *sampling,
+                self.curve_sampling,
+            ),
+            Snapshot::Curve { sampling, .. } => logging::GeometryContext::new(
+                &self.request,
+                self.plot_mode,
+                self.sampling,
+                *sampling,
+            ),
+            _ => logging::GeometryContext::new(
+                &self.request,
+                self.plot_mode,
+                self.sampling,
+                self.curve_sampling,
+            ),
+        };
         self.start(move |scene| snapshot.restore(scene));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.pending_diagnostics = Some(diagnostics);
+        }
     }
     fn start(&mut self, work: impl FnOnce(&mut Scene) -> Result<(), String> + Send + 'static) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.pending_diagnostics = Some(logging::GeometryContext::new(
+                self.pending_history_request
+                    .as_deref()
+                    .unwrap_or(&self.request),
+                self.plot_mode,
+                self.sampling,
+                self.curve_sampling,
+            ));
+        }
         let mut candidate = self.scene.clone();
         let (tx, rx) = mpsc::channel();
         self.pending = Some(rx);
@@ -148,7 +188,9 @@ impl Playground {
                     }
                     Err(error) => {
                         #[cfg(not(target_arch = "wasm32"))]
-                        tracing::warn!(target: "math_playground", event = "geometry_rejected");
+                        if let Some(context) = &self.pending_diagnostics {
+                            context.rejected(&error);
+                        }
                         self.error = true;
                         self.feedback = error;
                     }
@@ -156,12 +198,18 @@ impl Playground {
             }
             Some(Err(TryRecvError::Disconnected)) => {
                 #[cfg(not(target_arch = "wasm32"))]
-                tracing::error!(target: "math_playground", event = "geometry_worker_disconnected");
+                if let Some(context) = &self.pending_diagnostics {
+                    context.disconnected();
+                }
                 self.pending = None;
                 self.error = true;
                 self.feedback = "Geometry worker stopped; previous scene preserved.".into();
             }
             _ => {}
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.pending.is_none() {
+            self.pending_diagnostics = None;
         }
         if self.pending.is_none()
             && let Some(request) = self.pending_history_request.take()
@@ -426,7 +474,11 @@ impl Playground {
                             if edited != self.scene.helix {
                                 match self.scene.replace(edited) {
                                     Ok(()) => { self.error = false; self.feedback = "Helix updated from controls.".into(); }
-                                    Err(error) => { self.error = true; self.feedback = error; }
+                                    Err(error) => {
+                                        #[cfg(not(target_arch = "wasm32"))]
+                                        tracing::warn!(target:"math_playground", event="helix_controls_rejected", error=%truncate(&error,1024), radius=edited.radius,height=edited.height,turns=edited.turns);
+                                        self.error = true; self.feedback = error;
+                                    }
                                 }
                             }
                             ui.label(format!("Pitch: {:.3} units / turn", self.scene.helix.pitch()));
@@ -570,6 +622,27 @@ fn main() {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    #[test]
+    fn pending_diagnostics_keep_submitted_request_when_input_changes() {
+        let mut app = Playground {
+            request: "plot bad".into(),
+            ..Default::default()
+        };
+        app.start(|_| Err("Invalid expression".into()));
+        app.request = "plot x^2".into();
+        assert_eq!(
+            app.pending_diagnostics.as_ref().unwrap().request,
+            "plot bad"
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.pending.is_some() && std::time::Instant::now() < deadline {
+            app.finish();
+            std::thread::yield_now();
+        }
+        assert!(app.pending.is_none());
+        assert!(app.pending_diagnostics.is_none());
+        assert!(app.error);
+    }
 
     #[test]
     fn restored_panel_width_is_clamped_and_small_windows_keep_canvas_space() {

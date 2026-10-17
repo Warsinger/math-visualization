@@ -42,8 +42,13 @@ Windows `%LOCALAPPDATA%\MathPlayground\logs\application.jsonl`, Linux
 macOS `~/Library/Application Support/MathPlayground/logs/application.jsonl`.
 Each record has an RFC3339 UTC timestamp, severity, target and structured fields
 including an `event` name. Startup, normal shutdown, geometry completion/rejection,
-worker failure and panics use the same tracing facility. Request/history text and
-panic payloads are omitted. Startup errors are capped at 4096 characters.
+worker failure and panics use the same tracing facility. Geometry failures include
+the submitted request, error/reason, input mode and sampling context. Request/error
+fields are capped at 1024 UTF-8 bytes and marked when truncated. The request is
+captured at submission so later input edits cannot misidentify a failure; History
+restores use the snapshot's sampling settings. Helix-control failures include the
+edited parameters and error. Successful events omit request text; history contents
+and panic payloads are not dumped. Startup errors are capped at 4096 UTF-8 bytes.
 Logs stay local; share them only deliberately.
 
 The active file rotates at 2 MiB, retaining `application.jsonl.1` and `.2` (about
