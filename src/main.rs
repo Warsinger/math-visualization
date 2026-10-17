@@ -3,6 +3,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod layout;
 #[cfg(not(target_arch = "wasm32"))]
+mod logging;
+#[cfg(not(target_arch = "wasm32"))]
 mod startup;
 mod view;
 #[cfg(target_arch = "wasm32")]
@@ -108,6 +110,8 @@ impl Playground {
                 self.pending = None;
                 match result {
                     Ok(scene) => {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        tracing::info!(target: "math_playground", event = "geometry_updated", segments = scene.geometry.lines.len());
                         self.scene = scene;
                         if self.plot_mode != PlotMode::Auto {
                             self.plot_mode = if self.scene.curve.is_some() {
@@ -143,12 +147,16 @@ impl Playground {
                         }
                     }
                     Err(error) => {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        tracing::warn!(target: "math_playground", event = "geometry_rejected");
                         self.error = true;
                         self.feedback = error;
                     }
                 }
             }
             Some(Err(TryRecvError::Disconnected)) => {
+                #[cfg(not(target_arch = "wasm32"))]
+                tracing::error!(target: "math_playground", event = "geometry_worker_disconnected");
                 self.pending = None;
                 self.error = true;
                 self.feedback = "Geometry worker stopped; previous scene preserved.".into();
@@ -502,13 +510,17 @@ impl eframe::App for Playground {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> std::process::ExitCode {
+    let log = logging::init();
     let simulate_error = std::env::args_os()
         .skip(1)
         .any(|arg| arg == "--simulate-startup-error");
     match run(simulate_error) {
-        Ok(()) => std::process::ExitCode::SUCCESS,
+        Ok(()) => {
+            tracing::info!(target: "math_playground", event = "application_exit");
+            std::process::ExitCode::SUCCESS
+        }
         Err(error) => {
-            startup::report(&error.to_string());
+            startup::report(&error.to_string(), &log);
             std::process::ExitCode::FAILURE
         }
     }

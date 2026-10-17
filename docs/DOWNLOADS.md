@@ -34,22 +34,38 @@ The Rust cache restores dependency downloads and compiled dependencies per targe
 Packaging verifies exact archive contents and writes a SHA-256 checksum before uploading. A failed platform does not cancel the other platform jobs; only verified packages are uploaded by that job. This scope covers downloadable CI artifacts. Release publishing, signing, installers, browser/WebAssembly builds, and hosting remain separate work.
 
 The workflow uses checkout v6 and upload-artifact v6, which run on Node.js 24, addressing the previous checkout v4 Node.js 20 deprecation warning.
-# Windows launch diagnostics
+# Application logs and Windows launch diagnostics
 
-Packaged Windows builds use the GUI subsystem and do not open an extra console.
-Development builds retain their console. If the graphical app cannot start, it
-shows a Windows error dialog and attempts to write the latest failure to
-`%LOCALAPPDATA%\MathPlayground\startup-error.log`. The dialog reports whether the
-log was saved. The previous startup error is replaced; successful launches leave
-that diagnostic file available. Logs stay local. Code signing and SmartScreen
-reputation are tracked separately.
+Native builds append structured JSON Lines to the local data directory:
+Windows `%LOCALAPPDATA%\MathPlayground\logs\application.jsonl`, Linux
+`${XDG_DATA_HOME:-~/.local/share}/MathPlayground/logs/application.jsonl`, and
+macOS `~/Library/Application Support/MathPlayground/logs/application.jsonl`.
+Each record has an RFC3339 UTC timestamp, severity, target and structured fields
+including an `event` name. Startup, normal shutdown, geometry completion/rejection,
+worker failure and panics use the same tracing facility. Request/history text and
+panic payloads are omitted. Startup errors are capped at 4096 characters.
+Logs stay local; share them only deliberately.
 
-To verify the failure-reporting path, run `cargo run --release -- --simulate-startup-error`
-or launch the packaged executable with `--simulate-startup-error`. This intentionally
-fails before opening the app, shows the same error dialog, writes the same log,
-and exits with failure after the dialog is dismissed. The message identifies the
-simulation. It replaces any previous startup-error log; it does not modify history
-or graphics settings. Remove the option to launch normally.
+The active file rotates at 2 MiB, retaining `application.jsonl.1` and `.2` (about
+6 MiB total). A record over 64 KiB is omitted rather than split into invalid JSON.
+Each complete event is synchronously appended, flushed and synced; there is no
+background queue to lose on ordinary shutdown/startup failure. An OS file lock
+coordinates writers/rotation across app instances; contention or unavailable I/O
+reports a logging failure to stderr and omits that event without crashing the app.
+This cannot guarantee delivery during forced termination or filesystem failure.
+
+App events default to INFO; dependencies default to WARN. Set
+`MATH_PLAYGROUND_LOG=trace|debug|info|warn|error|off` to change app verbosity.
+Unknown values use INFO. The legacy `startup-error.log` is no longer written;
+any existing file is preserved for historical diagnostics and may be deleted manually.
+
+Windows release builds open no console. Startup failure still shows a dialog with
+the original error and the general log location or logging failure details.
+To verify that path, run `cargo run --release -- --simulate-startup-error` or pass
+`--simulate-startup-error` to a packaged executable. It appends `startup_failed`
+to the normal log, shows the error dialog, and exits unsuccessfully after dismissal.
+Remove the flag to launch normally; history and plot settings are unchanged.
+Browser diagnostics continue to use the browser console, without native file logging.
 
 ## Remembered native workspace layout
 
