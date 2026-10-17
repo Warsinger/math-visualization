@@ -72,6 +72,38 @@ pub struct Overlays<'a> {
     pub tangent_source: Option<&'a str>,
     pub area: Option<&'a math_playground::integral::Area>,
     pub slice: Option<&'a math_playground::slice::Slice>,
+    pub axis_markers: bool,
+    pub axis_extent: Option<[f32; 3]>,
+}
+
+// Prefer 1/2/5 steps rather than rounding arbitrary fractional coordinates.
+fn ticks(extent: f32) -> (f32, Vec<f32>) {
+    let raw = extent / 5.0;
+    let power = 10.0_f32.powf(raw.log10().floor());
+    let fraction = raw / power;
+    let step = power
+        * if fraction <= 1.0 {
+            1.0
+        } else if fraction <= 2.0 {
+            2.0
+        } else if fraction <= 5.0 {
+            5.0
+        } else {
+            10.0
+        };
+    let count = (extent / step + 1e-5).floor() as i32;
+    (step, (-count..=count).map(|i| i as f32 * step).collect())
+}
+fn tick_label(value: f32, step: f32) -> String {
+    if value.abs() < step * 1e-4 {
+        return "0".into();
+    }
+    let precision = (-step.log10()).ceil().clamp(0.0, 6.0) as usize;
+    let mut text = format!("{value:.precision$}");
+    if text.contains('.') {
+        text = text.trim_end_matches('0').trim_end_matches('.').into();
+    }
+    text
 }
 
 pub fn canvas(
@@ -86,6 +118,8 @@ pub fn canvas(
         tangent_source,
         area,
         slice,
+        axis_markers,
+        axis_extent,
     } = overlays;
     let (response, painter) = ui.allocate_painter(
         egui::vec2(ui.available_width().max(50.0), height),
@@ -124,37 +158,40 @@ pub fn canvas(
         }
     };
     if let Some(settings) = curve {
-        for i in -5..=5 {
-            let x = i as f32 * settings.extent[0] / 5.0;
-            let y = i as f32 * settings.extent[1] / 5.0;
-            for line in [
-                [[x, -settings.extent[1], 0.0], [x, settings.extent[1], 0.0]],
-                [[-settings.extent[0], y, 0.0], [settings.extent[0], y, 0.0]],
-            ] {
+        for axis in 0..2 {
+            for value in ticks(settings.extent[axis]).1 {
+                let mut a = [0.0; 3];
+                let mut b = a;
+                a[axis] = value;
+                b[axis] = value;
+                a[1 - axis] = -settings.extent[1 - axis];
+                b[1 - axis] = settings.extent[1 - axis];
+                let line = [a, b];
                 painter.line_segment(line.map(project), Stroke::new(0.5, Color32::from_gray(45)));
-            }
-            painter.text(
-                project([x, 0.0, 0.0]),
-                egui::Align2::LEFT_TOP,
-                format!("{x:.1}"),
-                egui::FontId::proportional(10.0),
-                Color32::GRAY,
-            );
-            if i != 0 {
-                painter.text(
-                    project([0.0, y, 0.0]),
-                    egui::Align2::LEFT_BOTTOM,
-                    format!("{y:.1}"),
-                    egui::FontId::proportional(10.0),
-                    Color32::GRAY,
-                );
             }
         }
     }
+    let extents = curve
+        .map(|s| [s.extent[0], s.extent[1], bound])
+        .or(axis_extent)
+        .unwrap_or([bound; 3]);
+    let mut label_rects = Vec::new();
     for (end, label, color) in [
-        ([bound, 0.0, 0.0], "x", Color32::from_rgb(240, 120, 120)),
-        ([0.0, bound, 0.0], "y", Color32::from_rgb(130, 200, 150)),
-        ([0.0, 0.0, bound], "z", Color32::from_rgb(140, 170, 245)),
+        (
+            [extents[0], 0.0, 0.0],
+            "x",
+            Color32::from_rgb(240, 120, 120),
+        ),
+        (
+            [0.0, extents[1], 0.0],
+            "y",
+            Color32::from_rgb(130, 200, 150),
+        ),
+        (
+            [0.0, 0.0, extents[2]],
+            "z",
+            Color32::from_rgb(140, 170, 245),
+        ),
     ] {
         if curve.is_some() && label == "z" {
             continue;
@@ -168,19 +205,61 @@ pub fn canvas(
         } else {
             end
         };
-        let start = if curve.is_some() {
-            end.map(|v| -v)
-        } else {
-            [0.0; 3]
-        };
+        let start = end.map(|v| -v);
         painter.line_segment([project(start), project(end)], Stroke::new(1.0, color));
-        painter.text(
+        label_rects.push(painter.text(
             project(end),
             egui::Align2::LEFT_BOTTOM,
             label,
             egui::FontId::proportional(14.0),
             color,
-        );
+        ));
+    }
+    if axis_markers {
+        let mut origin_drawn = false;
+        for (axis, extent) in
+            extents
+                .into_iter()
+                .enumerate()
+                .take(if curve.is_some() { 2 } else { 3 })
+        {
+            let mut end = [0.0; 3];
+            end[axis] = extent;
+            let direction = project(end) - project(end.map(|v| -v));
+            // Near end-on axes have no room for meaningful distinct labels.
+            if direction.length() < 40.0 {
+                continue;
+            }
+            let normal = egui::vec2(-direction.y, direction.x).normalized();
+            let (step, values) = ticks(extent);
+            for value in values {
+                if value == 0.0 && origin_drawn {
+                    continue;
+                }
+                let mut world = [0.0; 3];
+                world[axis] = value;
+                let point = project(world);
+                let galley = painter.layout_no_wrap(
+                    tick_label(value, step),
+                    egui::FontId::proportional(10.0),
+                    Color32::GRAY,
+                );
+                let center = point + normal * (8.0 + galley.size().y / 2.0);
+                let bounds = egui::Rect::from_center_size(center, galley.size());
+                if !rect.contains_rect(bounds)
+                    || label_rects.iter().any(|r| r.expand(3.0).intersects(bounds))
+                {
+                    continue;
+                }
+                painter.line_segment(
+                    [point - normal * 3.0, point + normal * 3.0],
+                    Stroke::new(1.0, Color32::GRAY),
+                );
+                painter.galley(bounds.min, galley, Color32::GRAY);
+                label_rects.push(bounds);
+                origin_drawn |= value == 0.0;
+            }
+        }
     }
     if let (Some(area), Some(settings)) = (area, curve) {
         for point in [area.points.first(), area.points.last()]
@@ -311,6 +390,88 @@ pub fn inspection_readout(ui: &mut egui::Ui, point: Option<[f32; 3]>, equation: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tick_labels_are_distinct_accurate_and_never_negative_zero() {
+        for extent in [0.1, 0.13, 0.37, 1.234, 3.0, 9.9, 20.0] {
+            let (step, values) = ticks(extent);
+            assert!(values.len() <= 11);
+            let labels: Vec<_> = values.iter().map(|v| tick_label(*v, step)).collect();
+            let unique: std::collections::HashSet<_> = labels.iter().collect();
+            assert_eq!(unique.len(), labels.len());
+            for (value, text) in values.iter().zip(labels) {
+                assert!((*value - text.parse::<f32>().unwrap()).abs() < step * 0.001);
+                assert_ne!(text, "-0");
+                assert!(value.abs() <= extent + 1e-5);
+            }
+        }
+        assert_eq!(tick_label(0.04, 0.02), "0.04");
+        assert_eq!(tick_label(-0.0, 0.02), "0");
+    }
+
+    #[test]
+    fn markers_toggle_in_both_dimensions_without_changing_geometry() {
+        let geometry = Geometry {
+            bound: 3.0,
+            ..Default::default()
+        };
+        for planar in [true, false] {
+            let mut positions = Vec::new();
+            for (visible, yaw) in [(false, 0.6), (true, 0.6), (true, 1.1)] {
+                let ctx = egui::Context::default();
+                let mut camera = Camera {
+                    yaw,
+                    ..Default::default()
+                };
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            Pos2::ZERO,
+                            egui::vec2(650.0, 350.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        canvas(
+                            ui,
+                            &geometry,
+                            &mut camera,
+                            300.0,
+                            planar.then(CurveSampling::default),
+                            Overlays {
+                                axis_markers: visible,
+                                ..Default::default()
+                            },
+                        );
+                    },
+                );
+                out.textures_delta.clear();
+                let labels: Vec<_> = out
+                    .shapes
+                    .iter()
+                    .filter_map(|s| match &s.shape {
+                        egui::Shape::Text(t) => Some((t.galley.job.text.clone(), t.pos)),
+                        _ => None,
+                    })
+                    .collect();
+                assert!(labels.iter().any(|(s, _)| s == "x"));
+                assert!(labels.iter().any(|(s, _)| s == "y"));
+                assert_eq!(labels.iter().any(|(s, _)| s == "z"), !planar);
+                let numbers: Vec<_> = labels
+                    .iter()
+                    .filter(|(s, _)| s.parse::<f32>().is_ok())
+                    .cloned()
+                    .collect();
+                assert_eq!(!numbers.is_empty(), visible);
+                assert!(numbers.iter().filter(|(s, _)| s == "0").count() <= 1);
+                positions.push(numbers);
+            }
+            if !planar {
+                assert_ne!(positions[1], positions[2]);
+            }
+            assert!(geometry.lines.is_empty());
+        }
+    }
     #[test]
     fn tangent_follows_the_same_hover_point_and_clears_when_inactive() {
         let ctx = egui::Context::default();

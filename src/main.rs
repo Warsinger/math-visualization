@@ -31,6 +31,7 @@ struct Playground {
     history: Store,
     history_open: bool,
     history_width: f32,
+    axis_markers: bool,
     #[cfg(not(target_arch = "wasm32"))]
     layout_checked: bool,
     pending_history_request: Option<String>,
@@ -62,6 +63,7 @@ impl Default for Playground {
             history: Store::session(),
             history_open: false,
             history_width: 300.0,
+            axis_markers: true,
             #[cfg(not(target_arch = "wasm32"))]
             layout_checked: false,
             pending_history_request: None,
@@ -371,6 +373,7 @@ impl Playground {
             ui.horizontal(|ui| {
                 if ui.selectable_label(self.history_open,"History").clicked() { self.history_open = !self.history_open; }
                 ui.small(format!("{} entries",self.history.history.entries.len()));
+                ui.checkbox(&mut self.axis_markers,"Axis coordinates");
             });
             if let Some(warning)=&self.history.warning { ui.colored_label(egui::Color32::YELLOW,warning); }
             ui.collapsing("Request examples and equation syntax", |ui| {
@@ -506,7 +509,8 @@ impl Playground {
                 let slice = if self.slice_enabled {
                     self.scene.surface.as_ref().and_then(|surface| self.slice_cache.get(&surface.source, surface.sampling, self.slice_axis, self.slice_position).as_ref().ok())
                 } else { None };
-                let output=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling), view::Overlays {tangent_source,area,slice});
+                let axis_extent = Some(self.scene.surface.as_ref().map_or([self.scene.helix.radius,self.scene.helix.radius,self.scene.helix.height/2.0], |s|s.sampling.extent));
+                let output=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling), view::Overlays {tangent_source,area,slice,axis_markers:self.axis_markers,axis_extent});
                 canvas_rect=output.rect;
                 inspected_point=output.selected;
                 tangent=output.tangent;
@@ -549,6 +553,7 @@ impl eframe::App for Playground {
     #[cfg(not(target_arch = "wasm32"))]
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         layout::Layout {
+            axis_markers: self.axis_markers,
             history_open: self.history_open,
             history_width: self.history_width,
             ..Default::default()
@@ -608,6 +613,7 @@ fn run(simulate_error: bool) -> eframe::Result {
                 history: Store::local(),
                 history_open: saved_layout.history_open,
                 history_width: saved_layout.history_width,
+                axis_markers: saved_layout.axis_markers,
                 ..Default::default()
             }))
         }),

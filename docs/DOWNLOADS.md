@@ -78,7 +78,7 @@ Native builds use eframe's persistence store at
 `MathPlayground/workspace-v1.ron` under the OS local-data directory (Windows:
 `%LOCALAPPDATA%`; Linux: `$XDG_DATA_HOME` or `~/.local/share`; macOS:
 `~/Library/Application Support`). Window position, size, maximized/fullscreen state,
-and History visibility/width are restored. History is currently the only optional
+History visibility/width, and axis coordinate visibility are restored. History is currently the only optional
 resizable side panel. The layout record is versioned and separate from plot history.
 Equations, camera, plot settings and exploration toggles are not saved here; general
 egui widget memory is intentionally not persisted.
