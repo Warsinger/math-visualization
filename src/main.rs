@@ -26,6 +26,7 @@ struct Playground {
     pending: Option<Receiver<Result<Scene, String>>>,
     history: Store,
     history_open: bool,
+    axis_markers: bool,
     pending_history_request: Option<String>,
     plot_mode: PlotMode,
     curve_sampling: CurveSampling,
@@ -52,6 +53,7 @@ impl Default for Playground {
             pending: None,
             history: Store::session(),
             history_open: false,
+            axis_markers: true,
             pending_history_request: None,
             plot_mode: PlotMode::Auto,
             curve_sampling: CurveSampling::default(),
@@ -301,6 +303,7 @@ impl Playground {
             ui.horizontal(|ui| {
                 if ui.selectable_label(self.history_open,"History").clicked() { self.history_open = !self.history_open; }
                 ui.small(format!("{} entries",self.history.history.entries.len()));
+                ui.checkbox(&mut self.axis_markers,"Axis coordinates");
             });
             if let Some(warning)=&self.history.warning { ui.colored_label(egui::Color32::YELLOW,warning); }
             ui.collapsing("Request examples and equation syntax", |ui| {
@@ -432,7 +435,8 @@ impl Playground {
                 let slice = if self.slice_enabled {
                     self.scene.surface.as_ref().and_then(|surface| self.slice_cache.get(&surface.source, surface.sampling, self.slice_axis, self.slice_position).as_ref().ok())
                 } else { None };
-                let output=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling), view::Overlays {tangent_source,area,slice});
+                let axis_extent = Some(self.scene.surface.as_ref().map_or([self.scene.helix.radius,self.scene.helix.radius,self.scene.helix.height/2.0], |s|s.sampling.extent));
+                let output=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling), view::Overlays {tangent_source,area,slice,axis_markers:self.axis_markers,axis_extent});
                 canvas_rect=output.rect;
                 inspected_point=output.selected;
                 tangent=output.tangent;

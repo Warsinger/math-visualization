@@ -109,3 +109,15 @@ Try `y=2x`, `x^2+2y^2=1`, and `x^2+y^2+2z^2=1` in Auto mode.
 Dimension selection, x-only shorthand, history source text, residuals,
 tangent and integral exploration all use the same equation parser.
 The existing 256-byte input and 64-level parsing limits still apply.
+
+## Axis coordinate markers
+
+**Axis coordinates** toggles tick marks and numeric labels in both 2D and 3D.
+It is on by default and retained when changing views during the session, but is
+not saved across launches. Axes, axis names and the 2D grid remain visible.
+No geometry is rebuilt when toggled. Coordinates use the applied sampling domain
+(or the helix radius/half-height), not un-applied sampling edits. Tick steps use
+1/2/5 multiples with enough decimal precision for small/fractional domains and no
+negative zero. In 3D ticks rotate/zoom with their axes. Numeric labels outside the
+canvas, overlapping other labels, or on an almost end-on axis are omitted to
+reduce clutter; the origin is labeled at most once. There is no depth occlusion.
