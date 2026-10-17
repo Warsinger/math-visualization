@@ -73,29 +73,46 @@ pub fn monitor_sizes(size: egui::Vec2, monitor: egui::Vec2) -> (egui::Vec2, egui
     (minimum, size.max(minimum).min(maximum))
 }
 pub fn fit_to_monitor(ctx: &egui::Context) {
-    ctx.input(|input| {
-        let viewport = input.viewport();
-        if let Some(monitor) = viewport
-            .monitor_size
-            .filter(|s| s.is_finite() && s.x > 0.0 && s.y > 0.0)
+    // Context commands need a write lock: release input's read lock first.
+    let viewport = ctx.input(|input| input.viewport().clone());
+    if let Some(monitor) = viewport
+        .monitor_size
+        .filter(|s| s.is_finite() && s.x > 0.0 && s.y > 0.0)
+    {
+        let size = viewport
+            .inner_rect
+            .map_or(egui::vec2(1150.0, 760.0), |r| r.size());
+        let (minimum, fitted) = monitor_sizes(size, monitor);
+        ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(minimum));
+        if viewport.maximized != Some(true)
+            && viewport.fullscreen != Some(true)
+            && (size - fitted).length() > 1.0
         {
-            let size = viewport
-                .inner_rect
-                .map_or(egui::vec2(1150.0, 760.0), |r| r.size());
-            let (minimum, fitted) = monitor_sizes(size, monitor);
-            ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(minimum));
-            if viewport.maximized != Some(true)
-                && viewport.fullscreen != Some(true)
-                && (size - fitted).length() > 1.0
-            {
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(fitted));
-            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(fitted));
         }
-    });
+    }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn first_native_frame_can_issue_monitor_commands_without_reentrant_locking() {
+        let ctx = egui::Context::default();
+        let mut input = egui::RawInput::default();
+        let viewport = input.viewports.get_mut(&egui::ViewportId::ROOT).unwrap();
+        viewport.monitor_size = Some(egui::vec2(800.0, 600.0));
+        viewport.inner_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(800.0, 600.0),
+        ));
+        let mut output = ctx.run_ui(input, |ui| fit_to_monitor(ui.ctx()));
+        let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
+        assert!(commands.iter().any(|c| matches!(c,egui::ViewportCommand::MinInnerSize(size) if *size==egui::vec2(760.0,520.0))));
+        assert!(commands.iter().any(
+            |c| matches!(c,egui::ViewportCommand::InnerSize(size) if *size==egui::vec2(760.0,520.0))
+        ));
+        output.textures_delta.clear();
+    }
     #[derive(Default)]
     struct Memory(std::collections::HashMap<String, String>);
     impl eframe::Storage for Memory {
