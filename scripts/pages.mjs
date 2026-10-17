@@ -90,11 +90,16 @@ if (command === 'pause' || command === 'resume') {
     await saveState(state.paused, false);
   }
   await removeDeployments(cf, selected);
-  const remaining = (await list()).filter(d => previewMatches(d, pr, commits, cutoff));
+  const inventory = await list();
+  const remaining = inventory.filter(d => previewMatches(d, pr, commits, cutoff));
   if (remaining.length) throw new Error('Matching previews remain after cleanup; retry visibly');
   console.log('Preview cleanup complete (including already-gone no-op).');
   await report(`Preview cleanup for PR #${pr.number}: ${selected.length} matching deployment(s) removed; production preserved.`);
-  await upsertComment(gh, pr.number, 'Preview removed. Reopen the PR and explicitly deploy again to create a new preview.', false);
+  const retained = inventory.filter(d => previewMatches(d, pr, commits)).sort((a, b) => Date.parse(b.created_on) - Date.parse(a.created_on))[0];
+  const comment = retained
+    ? `[Open the playground preview](${retained.url})\n\nA newer reopened-PR preview was preserved by cleanup.`
+    : 'Preview removed. An open PR can explicitly deploy a fresh preview.';
+  await upsertComment(gh, pr.number, comment, false);
 } else if (command === 'undeploy') {
   const directory = await mkdtemp(join(tmpdir(), 'math-playground-offline-'));
   const html = '<!doctype html><meta charset="utf-8"><title>Application offline</title><h1>Application offline</h1><p>The playground is temporarily unavailable.</p>';
