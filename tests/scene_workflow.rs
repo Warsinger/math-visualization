@@ -4,6 +4,78 @@ use math_playground::{
 };
 
 #[test]
+fn implicit_products_share_plotting_history_and_exploration_semantics() {
+    use math_playground::{
+        derivative::tangent,
+        expression::Equation,
+        history::{History, Outcome, Snapshot},
+        integral::integrate,
+        scene::PlotMode,
+    };
+    for (implicit, explicit, modes) in [
+        (
+            "y=2x",
+            "y=2*x",
+            vec![PlotMode::Auto, PlotMode::TwoD, PlotMode::ThreeD],
+        ),
+        (
+            "x^2+2y^2=1",
+            "x^2+2*y^2=1",
+            vec![PlotMode::Auto, PlotMode::TwoD, PlotMode::ThreeD],
+        ),
+        (
+            "x^2+y^2+2z^2=1",
+            "x^2+y^2+2*z^2=1",
+            vec![PlotMode::Auto, PlotMode::ThreeD],
+        ),
+        (
+            "2x^2",
+            "2*x^2",
+            vec![PlotMode::Auto, PlotMode::TwoD, PlotMode::ThreeD],
+        ),
+    ] {
+        for mode in modes {
+            let mut scene = Scene::default();
+            scene.request_in_mode(explicit, mode).unwrap();
+            let expected = scene.geometry.lines.clone();
+            scene.request_in_mode(implicit, mode).unwrap();
+            assert_eq!(scene.geometry.lines, expected, "{implicit}");
+            let saved = Snapshot::capture(&scene);
+            assert!(saved.request().contains(implicit));
+            let mut history = History::default();
+            history.record(
+                implicit.into(),
+                Outcome::Success {
+                    snapshot: saved.clone(),
+                },
+            );
+            let restored = History::decode(&serde_json::to_vec(&history).unwrap()).unwrap();
+            scene.replace(Helix::default()).unwrap();
+            if let Outcome::Success { snapshot } = &restored.entries[0].outcome {
+                snapshot.restore(&mut scene).unwrap();
+            } else {
+                panic!("expected success");
+            }
+            assert_eq!(Snapshot::capture(&scene), saved);
+            assert_eq!(scene.geometry.lines, expected);
+            for bad in ["xy", "2e(x)", "x 2", "sin x", "x=2=3"] {
+                assert!(scene.request_in_mode(bad, mode).is_err(), "{bad}");
+                assert_eq!(Snapshot::capture(&scene), saved);
+                assert_eq!(scene.geometry.lines, expected);
+            }
+        }
+    }
+    let residual = Equation::planar("y=2x").unwrap();
+    assert_eq!(residual.evaluate([3.0, 6.0, 0.0]), Some(0.0));
+    let a = tangent("2x^2", 2.0).unwrap();
+    let b = tangent("2*x^2", 2.0).unwrap();
+    assert_eq!((a.x, a.y, a.slope), (b.x, b.y, b.slope));
+    let a = integrate("2x^2", -1.0, 2.0).unwrap();
+    let b = integrate("2*x^2", -1.0, 2.0).unwrap();
+    assert_eq!((a.signed, a.total), (b.signed, b.total));
+}
+
+#[test]
 fn extended_functions_plot_and_restore_through_shared_evaluator() {
     use math_playground::{
         curve::CurveSampling,

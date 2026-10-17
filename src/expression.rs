@@ -342,18 +342,22 @@ impl Parser<'_> {
                 self.pos += 1;
                 value
             }
-            Some(0xcf) if self.text[self.pos..].starts_with("π".as_bytes()) => {
-                self.pos += "π".len();
-                Expr::Number(std::f64::consts::PI)
-            }
-            Some(c) if c.is_ascii_alphabetic() => {
+            Some(c)
+                if c.is_ascii_alphabetic() || self.text[self.pos..].starts_with("π".as_bytes()) =>
+            {
                 let start = self.pos;
-                while self.peek().is_some_and(|c| c.is_ascii_alphanumeric()) {
-                    self.pos += 1;
+                loop {
+                    if self.peek().is_some_and(|c| c.is_ascii_alphanumeric()) {
+                        self.pos += 1;
+                    } else if self.text[self.pos..].starts_with("π".as_bytes()) {
+                        self.pos += "π".len();
+                    } else {
+                        break;
+                    }
                 }
                 let name = std::str::from_utf8(&self.text[start..self.pos]).unwrap();
                 match name {
-                    "pi" => Expr::Number(std::f64::consts::PI),
+                    "pi" | "π" => Expr::Number(std::f64::consts::PI),
                     "x" => Expr::Variable(0),
                     "y" => Expr::Variable(1),
                     "z" => Expr::Variable(2),
@@ -366,7 +370,14 @@ impl Parser<'_> {
                 while self.peek().is_some_and(|c| c.is_ascii_digit() || c == b'.') {
                     self.pos += 1;
                 }
-                if matches!(self.peek(), Some(b'e' | b'E')) {
+                // A longer name (e.g. exp) is a separate factor, but a lone
+                // e/E touching a number belongs to scientific notation.
+                if matches!(self.peek(), Some(b'e' | b'E'))
+                    && !self
+                        .text
+                        .get(self.pos + 1)
+                        .is_some_and(u8::is_ascii_alphabetic)
+                {
                     self.pos += 1;
                     if matches!(self.peek(), Some(b'+' | b'-')) {
                         self.pos += 1;
@@ -378,7 +389,7 @@ impl Parser<'_> {
                 let token = std::str::from_utf8(&self.text[start..self.pos]).unwrap();
                 let value: f64 = token
                     .parse()
-                    .map_err(|_| "Invalid numeric literal.".to_owned())?;
+                    .map_err(|_| format!("Invalid numeric literal at byte {}. Complete scientific exponents; use '*' or a space before Euler's e.", start + 1))?;
                 if !value.is_finite() {
                     return Err("Numeric constants must be finite.".into());
                 }
@@ -393,18 +404,33 @@ impl Parser<'_> {
         };
         loop {
             self.space();
-            let (op, lb, rb) = match self.peek() {
-                Some(b'+') => ('+', 1, 2),
-                Some(b'-') => ('-', 1, 2),
-                Some(b'*') => ('*', 3, 4),
-                Some(b'/') => ('/', 3, 4),
-                Some(b'^') => ('^', 7, 6),
+            let (op, lb, rb, explicit) = match self.peek() {
+                Some(b'+') => ('+', 1, 2, true),
+                Some(b'-') => ('-', 1, 2, true),
+                Some(b'*') => ('*', 3, 4, true),
+                Some(b'/') => ('/', 3, 4, true),
+                Some(b'^') => ('^', 7, 6, true),
+                Some(c)
+                    if c == b'('
+                        || c.is_ascii_alphabetic()
+                        || self.text[self.pos..].starts_with("π".as_bytes()) =>
+                {
+                    ('*', 3, 4, false)
+                }
+                Some(c) if c.is_ascii_digit() || c == b'.' => {
+                    return Err(format!(
+                        "Unexpected numeric factor at byte {}. Insert '*' or put the coefficient first.",
+                        self.pos + 1
+                    ));
+                }
                 _ => break,
             };
             if lb < min {
                 break;
             }
-            self.pos += 1;
+            if explicit {
+                self.pos += 1;
+            }
             left = Expr::Binary(op, Box::new(left), Box::new(self.expr(rb, depth + 1)?));
         }
         Ok(left)
@@ -414,6 +440,147 @@ impl Parser<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn implicit_products_match_explicit_products_at_multiple_points() {
+        for (implicit, explicit) in [
+            ("4x", "4*x"),
+            ("2pi", "2*pi"),
+            ("2π", "2*π"),
+            ("2(x+y)", "2*(x+y)"),
+            ("(x+y)(x-y)", "(x+y)*(x-y)"),
+            ("x(y+1)", "x*(y+1)"),
+            ("(x+1)y", "(x+1)*y"),
+            ("2sin(x)", "2*sin(x)"),
+            ("2abs(x)", "2*abs(x)"),
+            ("abs(x)sin(x)", "abs(x)*sin(x)"),
+            ("x sin (x)", "x*sin(x)"),
+            ("sin(x)cos(x)", "sin(x)*cos(x)"),
+            ("sin(x)(x+1)", "sin(x)*(x+1)"),
+            ("pi(x+1)", "pi*(x+1)"),
+            ("x y", "x*y"),
+            ("x π", "x*π"),
+            ("2x(y+1)", "2*x*(y+1)"),
+            ("2 x\t(y+1)", "2*x*(y+1)"),
+            ("2log2(x)", "2*log2(x)"),
+            ("log(2x,2)", "log(2*x,2)"),
+            ("atan2(2y,3x)", "atan2(2*y,3*x)"),
+            ("2 e(x)", "2*e*x"),
+            ("2e3x", "2000*x"),
+            ("2E+3x", "2000*x"),
+            ("2e-3x", "0.002*x"),
+            ("2E-3x", "0.002*x"),
+            (".5x", "0.5*x"),
+            ("2(log10(x)+sin(2x))", "2*(log10(x)+sin(2*x))"),
+            ("x^2+2y^2=1", "x^2+2*y^2=1"),
+        ] {
+            let a = Equation::parse_impl(implicit, false).unwrap();
+            let b = Equation::parse_impl(explicit, false).unwrap();
+            for point in [[0.5, -1.0, 2.0], [3.0, 2.0, -1.0], [0.0; 3]] {
+                assert_eq!(
+                    a.evaluate(point),
+                    b.evaluate(point),
+                    "{implicit} at {point:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn implicit_products_share_left_associative_multiplicative_precedence() {
+        for (source, expected) in [
+            ("1/2x", 1.5),
+            ("1/(2x)", 1.0 / 6.0),
+            ("6/2(x+1)", 12.0),
+            ("2x^2", 18.0),
+            ("2^3x", 24.0),
+            ("-x^2", -9.0),
+            ("-2x^2", -18.0),
+            ("x^2^3", 6561.0),
+            ("2-x", -1.0),
+            ("2(-x)", -6.0),
+            ("2x/3x", 6.0),
+        ] {
+            assert_eq!(
+                Equation::explicit_y(source)
+                    .unwrap()
+                    .evaluate([3.0, 0.0, 0.0]),
+                Some(expected),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn adjacency_rejects_unknown_names_numeric_factors_and_incomplete_exponents() {
+        for source in [
+            "xy",
+            "xyz",
+            "xpi",
+            "pix",
+            "xsin(x)",
+            "sinx",
+            "log2x",
+            "x2",
+            "x/yz",
+            "sin x",
+            "unknown(x)",
+            "2exp(x)",
+            "2e",
+            "2e+",
+            "2e-",
+            "2e(x)",
+            "2..3",
+            "2 3",
+            "(x+1)2",
+            "sin(x)2",
+            "x 2",
+            "sin(x,y)",
+            "log(2x,)",
+            "x=2=3",
+            "πx",
+            "ππ",
+            "xπ",
+            "2efoo(x)",
+        ] {
+            assert!(Equation::parse_impl(source, false).is_err(), "{source}");
+        }
+        assert!(Equation::explicit_y("π 2").unwrap_err().contains("byte 4"));
+        assert!(
+            Equation::explicit_y("x 2")
+                .unwrap_err()
+                .contains("Insert '*'")
+        );
+        assert!(
+            Equation::explicit_y("2e")
+                .unwrap_err()
+                .contains("scientific")
+        );
+    }
+
+    #[test]
+    fn implicit_products_retain_resource_and_arithmetic_limits() {
+        let chain = format!("x{}", "(x)".repeat(85));
+        assert_eq!(chain.len(), 256);
+        assert_eq!(
+            Equation::explicit_y(&chain)
+                .unwrap()
+                .evaluate([1.0, 0.0, 0.0]),
+            Some(1.0)
+        );
+        assert!(Equation::explicit_y(&(chain + " ")).is_err());
+        assert!(Equation::explicit_y(&format!("{}x{}", "2(".repeat(65), ")".repeat(65))).is_err());
+        assert_eq!(
+            Equation::explicit_y("0(1/x)").unwrap().evaluate([0.0; 3]),
+            None
+        );
+        assert_eq!(
+            Equation::explicit_y("0(1e308 x)")
+                .unwrap()
+                .evaluate([2.0, 0.0, 0.0]),
+            None
+        );
+    }
     fn value(source: &str) -> Option<f64> {
         Equation::explicit_y(source).unwrap().evaluate([0.0; 3])
     }
@@ -561,8 +728,6 @@ mod tests {
             "SQRT(x)",
             "sqrtx",
             "sin^-1(x)",
-            "2abs(x)",
-            "abs(x)sin(x)",
             "√(x)",
             "|x|",
             "exp(x)",
@@ -605,8 +770,8 @@ mod tests {
                 Some(0.0)
             );
             assert!(Equation::parse(alias).is_err());
-            assert!(Equation::explicit_y(&format!("2{alias}")).is_err());
-            assert!(Equation::explicit_y(&format!("{alias}(x)")).is_err());
+            assert_eq!(eval(format!("2{alias}")), 2.0 * std::f64::consts::PI);
+            assert_eq!(eval(format!("{alias}(x)")), 0.0);
         }
         for source in ["piano", "PI", "πx", "ππ", "Π", "π+💥"] {
             assert!(Equation::explicit_y(source).is_err(), "{source}");
@@ -630,7 +795,7 @@ mod tests {
     fn function_syntax_and_resource_limits_remain_strict() {
         for s in [
             "sin x", "sin()", "sin(x,y)", "sinhh(x)", "sin(x", "sin(x))", "sinx", "SIN(x)",
-            "ln(1)", "2sin(x)",
+            "ln(1)", "2sinx",
         ] {
             assert!(Equation::parse(s).is_err(), "{s}");
         }
@@ -707,14 +872,15 @@ mod tests {
             Some(0.0)
         );
         assert!(Equation::parse("e").is_err());
-        for source in ["E", "ee", "ex", "2e", "e(x)", "1e-", "1e999"] {
+        assert_eq!(eval("e(x)"), 2.0 * std::f64::consts::E);
+        for source in ["E", "ee", "ex", "2e", "1e-", "1e999"] {
             assert!(Equation::explicit_y(source).is_err(), "{source}");
         }
     }
     #[test]
     fn rejects_unknown_code_and_malformed_input() {
         for s in [
-            "", "x=0=1", "2x", "sqrtx(x)", "w+1", "x;exit()", "(x", "x+", "1e999*x", "0=0",
+            "", "x=0=1", "xy", "sqrtx(x)", "w+1", "x;exit()", "(x", "x+", "1e999*x", "0=0",
         ] {
             assert!(Equation::parse(s).is_err(), "{s}");
         }

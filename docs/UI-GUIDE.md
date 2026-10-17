@@ -78,3 +78,34 @@ branch cuts may report uncertainty or sampling artifacts. Domain exclusions are
 sampling outcomes, whereas malformed syntax rejects the request without replacing
 the plot. ASCII calls are required; root symbols and absolute-value bars remain
 optional follow-ups.
+## Multiplication in equation input
+
+Products can omit `*` between complete factors: `4x`, `2pi`, `2π`,
+`2(x+y)`, `(x+y)(x-y)`, `x(y+1)`, `(x+1)y`, `2sin(x)`,
+`x sin(x)`, `sin(x)cos(x)`, `sin(x)(x+1)`, `pi(x+1)`, `x y`,
+`x π`, and `2x(y+1)`. Whitespace separates names; it is not discarded.
+Names are whole and case-sensitive: `xy`, `xpi`, `xsin(x)`, `sinx`,
+`log2x`, `x2`, `πx` and `ππ` are unknown names. Use `x*y` or `x y`.
+Functions still require parentheses (`sin (x)` works; `sin x` does not)
+and their documented argument counts. Products work inside arguments:
+`log(2x,2)` and `atan2(2y,3x)`. Equality and commas separate expressions.
+
+**Multiplication and division have equal precedence and evaluate left to right.**
+`1/2x` means `(1/2)*x`, not `1/(2x)`; at x=3 these give 1.5 and 1/6.
+Likewise `6/2(x+1)` means `(6/2)*(x+1)`. Use parentheses for denominator
+products. Powers bind first and remain right-associative: `2x^2` is `2*(x^2)`,
+`2^3x` is `(2^3)*x`, `-x^2` is `-(x^2)`, and `-2x^2` is `(-2)*(x^2)`.
+
+Numbers cannot follow another factor without `*`: `2 3`, `(x+1)2`,
+`sin(x)2`, and `x 2` are errors. Write `2x` or `x*2`.
+Scientific notation stays intact: `2e3` / `2E3` mean 2000 and `2e-3`
+means 0.002; `2e3x` means `2000*x`. Incomplete `2e`, `2e+`, `2e-`,
+and adjacent `2e(x)` are errors. For Euler's constant use `2*e` or
+`2 e`; `2 e(x)` means `2*e*x`. Malformed `2..3` remains invalid.
+Unsupported names such as `exp` remain unsupported. Root symbols and
+absolute-value bars are not added by this syntax.
+
+Try `y=2x`, `x^2+2y^2=1`, and `x^2+y^2+2z^2=1` in Auto mode.
+Dimension selection, x-only shorthand, history source text, residuals,
+tangent and integral exploration all use the same equation parser.
+The existing 256-byte input and 64-level parsing limits still apply.
