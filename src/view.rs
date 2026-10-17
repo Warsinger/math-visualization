@@ -423,7 +423,7 @@ mod tests {
                     yaw,
                     ..Default::default()
                 };
-                let out = ctx.run_ui(
+                let mut out = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(
                             Pos2::ZERO,
@@ -445,6 +445,7 @@ mod tests {
                         );
                     },
                 );
+                out.textures_delta.clear();
                 let labels: Vec<_> = out
                     .shapes
                     .iter()
