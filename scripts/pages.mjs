@@ -3,12 +3,13 @@ import { mkdtemp, writeFile, appendFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
-import { repository, projectName, stateKey, stateOf, canPublish, previewMatches, collectPages, removeDeployments, upsertComment, offlineProduction } from './pages-policy.mjs';
+import { repository, projectName, stateKey, stateOf, canPublish, previewMatches, collectPages, removeDeployments, upsertComment, offlineProduction, parseOptions } from './pages-policy.mjs';
 
 const args = process.argv.slice(2);
 const command = args.shift();
-const value = name => { const i = args.indexOf(name); return i < 0 ? undefined : args[i + 1]; };
-const apply = args.includes('--apply');
+const options = parseOptions(args);
+const value = name => options[name.replace(/^--/, '')];
+const apply = options.apply;
 const target = value('--target');
 if (!['status', 'publish', 'pause', 'resume', 'undeploy', 'cleanup'].includes(command)) throw new Error('Specify status, publish, pause, resume, undeploy or cleanup');
 if (!['production', 'preview'].includes(target)) throw new Error('Explicit --target production|preview required');

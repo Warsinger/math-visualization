@@ -1,10 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { repository, stateOf, canPublish, previewMatches, collectPages, removeDeployments, upsertComment, commentMarker, offlineProduction } from './pages-policy.mjs';
+import { repository, stateOf, canPublish, previewMatches, collectPages, removeDeployments, upsertComment, commentMarker, offlineProduction, parseOptions } from './pages-policy.mjs';
 const pr = { number: 62, state: 'open', created_at: '2026-10-01T00:00:00Z', head: { ref: 'codex/feature', sha: 'new', repo: { full_name: repository } }, base: { ref: 'main', repo: { full_name: repository } } };
 const start = Date.parse('2026-10-16T00:00:00Z');
 const deployment = (overrides = {}) => ({ id: 'one', environment: 'preview', created_on: '2026-10-16T00:01:00Z', deployment_trigger: { metadata: { branch: 'pr-62', commit_hash: 'old', commit_message: `MP1:${JSON.stringify({ repo: repository, pr: 62, branch: 'codex/feature', sha: 'old', created: start })}` } }, ...overrides });
+test('dry-run options cannot be turned into apply by a string input', () => {
+  assert.equal(parseOptions(['--target', 'production', '--pr', '']).apply, false);
+  assert.throws(() => parseOptions(['--target', 'production', '--pr', '--apply']));
+  assert.equal(parseOptions(['--target', 'preview', '--pr', '62', '--apply']).apply, true);
+});
 test('preview identity excludes production, unrelated PR/repository/branch and handles old force-pushed revisions', () => {
   assert.ok(previewMatches(deployment(), pr, new Set()));
   assert.ok(!previewMatches(deployment({ environment: 'production' }), pr, new Set(['old'])));

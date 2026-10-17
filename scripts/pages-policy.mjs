@@ -1,3 +1,11 @@
+import { parseArgs } from 'node:util';
+export function parseOptions(args) {
+  return parseArgs({ args, strict: true, options: {
+    target: { type: 'string' }, pr: { type: 'string' }, confirm: { type: 'string' },
+    'closed-at': { type: 'string' }, apply: { type: 'boolean', default: false }
+  } }).values;
+}
+
 export const repository = 'Warsinger/math-visualization';
 export const projectName = 'math-playground';
 export const stateKey = 'MP_PUBLISH_STATE';
