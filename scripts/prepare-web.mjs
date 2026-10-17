@@ -22,6 +22,9 @@ await writeFile(resolve(output, relative, 'math_playground.js'), js);
 await writeFile(resolve(output, relative, 'math_playground_bg.wasm'), wasm);
 await writeFile(resolve(output, 'index.html'), template.replace('./math_playground.js', `./${relative}/math_playground.js`));
 await writeFile(resolve(output, '_headers'), await readFile(resolve(root, 'web/_headers')));
+for (const [source, destination] of [['favicon.ico', 'favicon.ico'], ['app-192.png', 'icon-192.png'], ['apple-touch-icon.png', 'apple-touch-icon.png']]) {
+  await writeFile(resolve(output, destination), await readFile(resolve(root, 'assets/icon', source)));
+}
 // Prevent Pages' implicit SPA fallback from returning HTML for a missing Wasm URL.
 await writeFile(resolve(output, '404.html'), '<!doctype html><title>Not found</title><h1>Not found</h1>');
 console.log(`Prepared browser assets: ${relative}`);

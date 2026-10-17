@@ -18,6 +18,13 @@ Each inner package contains the `math-playground` executable (`.exe` on Windows)
 
 A working graphics driver is required on every platform. Automated CI tests include headless UI drawing, not interactive window/driver validation. Report startup or display problems with the target and revision from `build-info.json`.
 
+Packages also include `app-icon.png`. Windows embeds the application icon in the
+executable and supplies it to the window. Linux window icons depend on the
+desktop/window system (Wayland may require installed desktop-entry integration).
+The macOS archive includes `app-icon.icns` for future bundle integration; the
+current raw executable does not acquire a Finder/Dock icon just from that file.
+See [icon assets](../assets/icon/README.md) in the source repository for exports.
+
 ## Build pipeline
 
 Pushes to main, pull requests, and manual workflow dispatch run formatting once, then strict Clippy, debug-profile tests, release-profile tests, and an optimized release build on each native runner. Branch pushes use the PR event to avoid duplicate builds. Release tests reuse compatible compiled dependencies when building the packaged app, but test harnesses are separate binaries. Debug tests retain debug assertions/overflow checks; release tests exercise optimized behavior. Release builds keep limited debug information for backtrace locations (not full variable inspection), with ordinary release optimization and runtime-check settings unchanged. CI enables `RUST_BACKTRACE=1`.

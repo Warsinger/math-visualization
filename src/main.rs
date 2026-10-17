@@ -492,6 +492,10 @@ fn run(simulate_error: bool) -> eframe::Result {
     }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            .with_icon(
+                eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon/app-256.png"))
+                    .expect("bundled application icon must be a valid PNG"),
+            )
             .with_inner_size([1150.0, 760.0])
             .with_min_inner_size([950.0, 760.0]),
         ..Default::default()

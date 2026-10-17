@@ -17,4 +17,16 @@ const headers = await readFile(new URL('_headers', root), 'utf8');
 assert.match(headers, /\/index\.html\s+Cache-Control: no-cache/);
 assert.match(headers, /\/assets\/\*\s+Cache-Control: public, max-age=31536000, immutable/);
 await readFile(new URL('404.html', root));
+for (const [file, size] of [['icon-192.png', 192], ['apple-touch-icon.png', 180]]) {
+  assert.ok(html.includes(`./${file}`), `Missing icon link: ${file}`);
+  const png = await readFile(new URL(file, root));
+  assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  assert.equal(png.readUInt32BE(16), size);
+  assert.equal(png.readUInt32BE(20), size);
+}
+assert.ok(html.includes('./favicon.ico'));
+const ico = await readFile(new URL('favicon.ico', root));
+assert.equal(ico.readUInt16LE(2), 1);
+assert.equal(ico.readUInt16LE(4), 3);
+assert.deepEqual([0, 1, 2].map(i => ico[6 + i * 16]), [16, 32, 48]);
 console.log(`Verified browser asset pair: ${path[2]}`);
