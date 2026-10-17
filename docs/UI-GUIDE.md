@@ -121,3 +121,9 @@ No geometry is rebuilt when toggled. Coordinates use the applied sampling domain
 negative zero. In 3D ticks rotate/zoom with their axes. Numeric labels outside the
 canvas, overlapping other labels, or on an almost end-on axis are omitted to
 reduce clutter; the origin is labeled at most once. There is no depth occlusion.
+
+## Narrow windows and phones
+
+Below 900 logical pixels wide, plot controls and exploration tools are in a collapsible section above the full-width plot. History appears below the plot when enabled. Scroll vertically to reach off-screen controls and readouts; opening history never covers the visualization. Wider windows retain the resizable history dock and controls beside the plot. Short windows also scroll rather than clip controls. Desktop windows can be resized down to 320 × 360 logical pixels.
+
+Drag the plot to pan a 2D curve or rotate a 3D plot. In narrow layouts, use the Zoom slider under Plot controls and exploration; scrolling moves through the workspace without changing zoom. Touch-and-hold near a plotted line to inspect it while the pointer is down.

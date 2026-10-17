@@ -62,7 +62,7 @@ pub fn sanitize_window(mut viewport: egui::ViewportBuilder) -> egui::ViewportBui
         .filter(|s| s.is_finite() && s.x > 0.0 && s.y > 0.0)
         .unwrap_or(egui::vec2(64.0, 64.0));
     viewport.inner_size = Some(size.min(egui::vec2(16384.0, 16384.0)));
-    viewport.min_inner_size = Some(egui::vec2(950.0, 760.0).min(size));
+    viewport.min_inner_size = Some(egui::vec2(320.0, 360.0).min(size));
     if viewport
         .position
         .is_some_and(|p| !p.is_finite() || p.x.abs() > 100_000.0 || p.y.abs() > 100_000.0)
@@ -75,7 +75,7 @@ pub fn sanitize_window(mut viewport: egui::ViewportBuilder) -> egui::ViewportBui
 pub fn monitor_sizes(size: egui::Vec2, monitor: egui::Vec2) -> (egui::Vec2, egui::Vec2) {
     // Leave space for decorations/taskbars on screens smaller than the normal UI minimum.
     let maximum = (monitor - egui::vec2(40.0, 80.0)).max(egui::vec2(320.0, 240.0));
-    let minimum = egui::vec2(950.0, 760.0).min(maximum);
+    let minimum = egui::vec2(320.0, 360.0).min(maximum);
     (minimum, size.max(minimum).min(maximum))
 }
 pub fn fit_to_monitor(ctx: &egui::Context) {
@@ -112,8 +112,9 @@ mod tests {
             egui::vec2(800.0, 600.0),
         ));
         let mut output = ctx.run_ui(input, |ui| fit_to_monitor(ui.ctx()));
+        output.textures_delta.clear();
         let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
-        assert!(commands.iter().any(|c| matches!(c,egui::ViewportCommand::MinInnerSize(size) if *size==egui::vec2(760.0,520.0))));
+        assert!(commands.iter().any(|c| matches!(c,egui::ViewportCommand::MinInnerSize(size) if *size==egui::vec2(320.0,360.0))));
         assert!(commands.iter().any(
             |c| matches!(c,egui::ViewportCommand::InnerSize(size) if *size==egui::vec2(760.0,520.0))
         ));
@@ -203,7 +204,7 @@ mod tests {
                 let before_creation = sanitize_window(
                     egui::ViewportBuilder::default()
                         .with_inner_size(framework_size)
-                        .with_min_inner_size([950.0, 760.0]),
+                        .with_min_inner_size([320.0, 360.0]),
                 );
                 assert_eq!(before_creation.inner_size, Some(framework_size));
                 assert!(before_creation.min_inner_size.unwrap().x <= framework_size.x);
@@ -216,10 +217,10 @@ mod tests {
     #[test]
     fn smaller_monitor_reduces_minimum_and_keeps_window_size_usable() {
         let (minimum, size) = monitor_sizes(egui::vec2(1500.0, 1200.0), egui::vec2(800.0, 600.0));
-        assert_eq!(minimum, egui::vec2(760.0, 520.0));
-        assert_eq!(size, minimum);
+        assert_eq!(minimum, egui::vec2(320.0, 360.0));
+        assert_eq!(size, egui::vec2(760.0, 520.0));
         let (minimum, size) = monitor_sizes(egui::vec2(640.0, 480.0), egui::vec2(1920.0, 1080.0));
-        assert_eq!(minimum, egui::vec2(950.0, 760.0));
-        assert_eq!(size, minimum);
+        assert_eq!(minimum, egui::vec2(320.0, 360.0));
+        assert_eq!(size, egui::vec2(640.0, 480.0));
     }
 }

@@ -233,101 +233,115 @@ impl Playground {
         if !self.history_open {
             return None;
         }
-        let mut restore = None;
-        let mut retry = None;
         let max_width = (ui.available_width() - 600.0).clamp(0.0, 360.0);
         // A monitor smaller than the normal minimum must still retain a canvas.
         if max_width < 120.0 {
             return None;
         }
         let panel = egui::Panel::right("history_panel")
-            .default_size(self.history_width.clamp(120.0,max_width))
+            .default_size(self.history_width.clamp(120.0, max_width))
             .min_size(260.0_f32.min(max_width))
             .max_size(max_width)
             .resizable(true)
-            .show(ui, |ui| {
-                ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
-                ui.horizontal(|ui| {
-                    ui.heading("History");
-                    if ui.button("Hide").clicked() { self.history_open=false; }
-                });
-                ui.label("Newest first · up to 200 entries · timestamps in UTC");
-                #[cfg(target_arch = "wasm32")]
-                ui.small("Browser session only: history resets when this page reloads.");
-            ui.small("Restore uses saved plot settings. Edit/retry fills the input; current settings apply when submitted.");
-                if let Some(path) = &self.history.path {
-                    ui.label(format!("Storage: {}", path.display()));
+            .show(ui, |ui| self.history_contents(ui));
+        self.history_width = panel.response.rect.width().clamp(260.0, 360.0);
+        Some(panel.response.rect)
+    }
+    fn history_contents(&mut self, ui: &mut egui::Ui) {
+        let mut restore = None;
+        let mut retry = None;
+
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+        ui.horizontal(|ui| {
+            ui.heading("History");
+            if ui.button("Hide").clicked() {
+                self.history_open = false;
+            }
+        });
+        ui.label("Newest first · up to 200 entries · timestamps in UTC");
+        #[cfg(target_arch = "wasm32")]
+        ui.small("Browser session only: history resets when this page reloads.");
+        ui.small("Restore uses saved plot settings. Edit/retry fills the input; current settings apply when submitted.");
+        if let Some(path) = &self.history.path {
+            ui.label(format!("Storage: {}", path.display()));
+        }
+        if let Some(warning) = &self.history.warning {
+            ui.colored_label(egui::Color32::YELLOW, warning);
+        }
+        ui.add_enabled_ui(self.pending.is_none(), |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("Add current plot").clicked() {
+                    let snapshot = Snapshot::capture(&self.scene);
+                    self.history
+                        .record(snapshot.request(), Outcome::Success { snapshot });
                 }
-                if let Some(warning) = &self.history.warning {
-                    ui.colored_label(egui::Color32::YELLOW, warning);
+                if ui.button("Clear history").clicked() {
+                    self.history.clear();
                 }
-                ui.add_enabled_ui(self.pending.is_none(), |ui| {
-                    ui.horizontal(|ui| {
-                        if ui.button("Add current plot").clicked() {
-                            let snapshot = Snapshot::capture(&self.scene);
-                            self.history
-                                .record(snapshot.request(), Outcome::Success { snapshot });
-                        }
-                        if ui.button("Clear history").clicked() {
-                            self.history.clear();
-                        }
-                    });
-                    if self.history.history.entries.is_empty() {
-                        ui.label("No history yet. Apply a request or add the current plot.");
-                    }
-                    egui::ScrollArea::vertical()
-                        .max_height(ui.available_height())
-                        .show(ui, |ui| {
-                            for entry in self.history.history.entries.iter().rev() {
-                                ui.separator();
-                                let date =
-                                    chrono::DateTime::from_timestamp(entry.timestamp as i64, 0)
-                                        .map(|d| d.format("%Y-%m-%d %H:%M:%S UTC").to_string())
-                                        .unwrap_or_else(|| "Unknown time".into());
-                                ui.small(date);
-                                ui.label(egui::RichText::new(&entry.request).font(egui::FontId::monospace(14.0)));
-                                match &entry.outcome {
-                                    Outcome::Success { snapshot } => {
-                                        ui.colored_label(egui::Color32::LIGHT_GREEN, "Succeeded");
-                                        ui.small(if matches!(snapshot,Snapshot::Curve {..}){"2D curve"}else{"3D plot"});
-                                        if let Snapshot::Surface { sampling, .. } = snapshot {
-                                            ui.small(format!(
-                                                "Bounds ±{:?}; {} cells/axis",
-                                                sampling.extent, sampling.resolution
-                                            ));
-                                        }
-                                        ui.horizontal(|ui| {
-                                            if ui.button("Restore").clicked() {
-                                                restore = Some(snapshot.clone());
-                                            }
-                                            if ui.button("Edit/retry").clicked() {
-                                                self.plot_mode=if matches!(snapshot,Snapshot::Curve {..}){PlotMode::TwoD}else{PlotMode::ThreeD};
-                                                retry = Some(snapshot.request());
-                                            }
-                                        });
+            });
+            if self.history.history.entries.is_empty() {
+                ui.label("No history yet. Apply a request or add the current plot.");
+            }
+            egui::ScrollArea::vertical()
+                .max_height(ui.available_height())
+                .show(ui, |ui| {
+                    for entry in self.history.history.entries.iter().rev() {
+                        ui.separator();
+                        let date = chrono::DateTime::from_timestamp(entry.timestamp as i64, 0)
+                            .map(|d| d.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                            .unwrap_or_else(|| "Unknown time".into());
+                        ui.small(date);
+                        ui.label(
+                            egui::RichText::new(&entry.request).font(egui::FontId::monospace(14.0)),
+                        );
+                        match &entry.outcome {
+                            Outcome::Success { snapshot } => {
+                                ui.colored_label(egui::Color32::LIGHT_GREEN, "Succeeded");
+                                ui.small(if matches!(snapshot, Snapshot::Curve { .. }) {
+                                    "2D curve"
+                                } else {
+                                    "3D plot"
+                                });
+                                if let Snapshot::Surface { sampling, .. } = snapshot {
+                                    ui.small(format!(
+                                        "Bounds ±{:?}; {} cells/axis",
+                                        sampling.extent, sampling.resolution
+                                    ));
+                                }
+                                ui.horizontal(|ui| {
+                                    if ui.button("Restore").clicked() {
+                                        restore = Some(snapshot.clone());
                                     }
-                                    Outcome::Error { message } => {
-                                        ui.colored_label(
-                                            egui::Color32::LIGHT_RED,
-                                            format!("Failed: {message}"),
-                                        );
-                                        if ui.button("Edit/retry").clicked() {
-                                            retry = Some(entry.request.clone());
-                                        }
+                                    if ui.button("Edit/retry").clicked() {
+                                        self.plot_mode =
+                                            if matches!(snapshot, Snapshot::Curve { .. }) {
+                                                PlotMode::TwoD
+                                            } else {
+                                                PlotMode::ThreeD
+                                            };
+                                        retry = Some(snapshot.request());
                                     }
+                                });
+                            }
+                            Outcome::Error { message } => {
+                                ui.colored_label(
+                                    egui::Color32::LIGHT_RED,
+                                    format!("Failed: {message}"),
+                                );
+                                if ui.button("Edit/retry").clicked() {
+                                    retry = Some(entry.request.clone());
                                 }
                             }
-                        });
+                        }
+                    }
                 });
-            });
+        });
         if let Some(request) = retry {
             self.request = request;
         }
         if let Some(snapshot) = restore {
             self.restore_snapshot(snapshot);
         }
-        self.history_width = panel.response.rect.width().clamp(260.0, 360.0);
-        Some(panel.response.rect)
     }
 }
 
@@ -338,13 +352,17 @@ impl Playground {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(50));
         }
-        let history_rect = self.history_ui(ui);
+        let compact = ui.available_width() < 900.0;
+        let history_rect = if compact { None } else { self.history_ui(ui) };
         let mut canvas_rect = egui::Rect::NOTHING;
         egui::CentralPanel::default().show(ui, |ui| {
+          egui::ScrollArea::vertical().id_salt("workspace_scroll").show(ui, |ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+            if compact { ui.spacing_mut().interact_size.y = 32.0; }
             ui.heading("Mathematical playground");
             ui.label("Cartesian curves, helices and implicit surfaces.");
             ui.add_enabled_ui(self.pending.is_none(),|ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label("Input mode:");
                     ui.selectable_value(&mut self.plot_mode,PlotMode::Auto,"Auto");
                     ui.selectable_value(&mut self.plot_mode,PlotMode::TwoD,"2D · XY");
@@ -370,7 +388,7 @@ impl Playground {
             });
             let color = if self.error { egui::Color32::LIGHT_RED } else { egui::Color32::LIGHT_GREEN };
             ui.colored_label(color, &self.feedback);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if ui.selectable_label(self.history_open,"History").clicked() { self.history_open = !self.history_open; }
                 ui.small(format!("{} entries",self.history.history.entries.len()));
                 ui.checkbox(&mut self.axis_markers,"Axis coordinates");
@@ -388,13 +406,14 @@ impl Playground {
                 ui.label("Sampling can miss thin features, singularities and even roots; discontinuities can mislead.");
             });
             ui.separator();
-            let canvas_height = (ui.available_height() - 210.0).max(120.0);
+            let canvas_height = if compact { (ui.ctx().content_rect().height() * 0.48).clamp(220.0, 500.0) } else { (ui.available_height() - 210.0).max(120.0) };
             let mut inspected_point = None;
             let mut inspection_equation = None;
             let mut tangent = None;
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.set_width(255.0);
+            let layout = if compact { egui::Layout::top_down(egui::Align::Min) } else { egui::Layout::left_to_right(egui::Align::Min) };
+            ui.with_layout(layout, |ui| {
+                let controls = |ui: &mut egui::Ui| {
+                    ui.set_width(if compact { ui.available_width() } else { 255.0 });
                     ui.add_enabled_ui(self.pending.is_none(), |ui| {
                         if let Some(curve)=&self.scene.curve {
                             let source=curve.source.clone();
@@ -496,7 +515,10 @@ impl Playground {
                     }
                     ui.label(if self.scene.curve.is_some(){"Drag to pan. Scroll to zoom."}else{"Drag to rotate. Scroll to zoom."});
                     ui.label("Hover near a line to inspect coordinates and residual.");
-                });
+                };
+                if compact {
+                    egui::CollapsingHeader::new("Plot controls and exploration").show(ui, controls);
+                } else { ui.vertical(controls); }
                 inspection_equation = if let Some(curve) = &self.scene.curve {
                     math_playground::expression::Equation::planar(&curve.source).ok()
                 } else if let Some(surface) = &self.scene.surface {
@@ -536,6 +558,11 @@ impl Playground {
                 ui.label("x = r cos(2πnt)    y = r sin(2πnt)    z = h(t − ½)    0 ≤ t ≤ 1");
                 ui.label("Height stays fixed when turns change. Pitch = height / turns. Units are abstract.");
             }
+            if compact && self.history_open {
+                ui.separator();
+                self.history_contents(ui);
+            }
+          });
         });
         (canvas_rect, history_rect)
     }
@@ -600,7 +627,7 @@ fn run(simulate_error: bool) -> eframe::Result {
                     .expect("bundled application icon must be a valid PNG"),
             )
             .with_inner_size([1150.0, 760.0])
-            .with_min_inner_size([950.0, 760.0]),
+            .with_min_inner_size([320.0, 360.0]),
         ..Default::default()
     };
     eframe::run_native(
@@ -628,6 +655,112 @@ fn main() {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    #[test]
+    fn wheel_gestures_have_one_owner_in_short_desktop_and_compact_layouts() {
+        for width in [1150.0, 390.0] {
+            let ctx = egui::Context::default();
+            let mut app = Playground::default();
+            let mut time = 0.0;
+            let mut frame = |app: &mut Playground, events: Vec<egui::Event>| {
+                time += 1.0 / 60.0;
+                let mut canvas = egui::Rect::NOTHING;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 500.0),
+                        )),
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        canvas = app.draw(ui).0;
+                    },
+                );
+                output.textures_delta.clear();
+                canvas
+            };
+            let mut before = frame(&mut app, vec![]);
+            for _ in 0..3 {
+                before = frame(&mut app, vec![]);
+            }
+            // The canvas can extend below a short viewport: hover its visible part.
+            let pointer = egui::pos2(before.center().x, before.top() + 40.0);
+            before = frame(&mut app, vec![egui::Event::PointerMoved(pointer)]);
+            let zoom = app.camera.zoom;
+            frame(
+                &mut app,
+                vec![egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    phase: egui::TouchPhase::Move,
+                    delta: egui::vec2(0.0, -100.0),
+                    modifiers: egui::Modifiers::default(),
+                }],
+            );
+            let mut after = before;
+            for _ in 0..30 {
+                after = frame(&mut app, vec![]);
+            }
+            if width >= 900.0 {
+                assert!(app.camera.zoom < zoom, "desktop wheel must zoom");
+                assert!(
+                    (after.top() - before.top()).abs() < 0.1,
+                    "desktop zoom must not scroll: {before:?} -> {after:?}"
+                );
+            } else {
+                assert_eq!(app.camera.zoom, zoom, "compact scrolling must not zoom");
+                assert!(
+                    after.top() < before.top() - 10.0,
+                    "compact wheel must scroll"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn responsive_canvas_stays_inside_phone_tablet_and_short_viewports() {
+        for (width, height) in [
+            (320.0, 568.0),
+            (390.0, 844.0),
+            (844.0, 390.0),
+            (768.0, 1024.0),
+            (1150.0, 500.0),
+        ] {
+            let ctx = egui::Context::default();
+            let mut app = Playground {
+                history_open: true,
+                ..Default::default()
+            };
+            for _ in 0..3 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, height),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let (canvas, history) = app.draw(ui);
+                        assert!(
+                            canvas.width() >= 200.0,
+                            "canvas too narrow at {width}x{height}: {canvas:?}"
+                        );
+                        assert!(
+                            canvas.left() >= 0.0 && canvas.right() <= width,
+                            "horizontal overflow at {width}x{height}: {canvas:?}"
+                        );
+                        if width < 900.0 {
+                            assert!(history.is_none());
+                        }
+                    },
+                );
+                output.textures_delta.clear();
+            }
+        }
+    }
+
     #[test]
     fn pending_diagnostics_keep_submitted_request_when_input_changes() {
         let mut app = Playground {
