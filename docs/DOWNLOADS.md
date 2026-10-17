@@ -50,3 +50,33 @@ fails before opening the app, shows the same error dialog, writes the same log,
 and exits with failure after the dialog is dismissed. The message identifies the
 simulation. It replaces any previous startup-error log; it does not modify history
 or graphics settings. Remove the option to launch normally.
+
+## Remembered native workspace layout
+
+Native builds use eframe's persistence store at
+`MathPlayground/workspace-v1.ron` under the OS local-data directory (Windows:
+`%LOCALAPPDATA%`; Linux: `$XDG_DATA_HOME` or `~/.local/share`; macOS:
+`~/Library/Application Support`). Window position, size, maximized/fullscreen state,
+and History visibility/width are restored. History is currently the only optional
+resizable side panel. The layout record is versioned and separate from plot history.
+Equations, camera, plot settings and exploration toggles are not saved here; general
+egui widget memory is intentionally not persisted.
+
+The framework saves changed storage on its 30-second autosave cadence and normal
+shutdown, and joins its final file-write thread. Missing/corrupt/incompatible layout
+records use defaults. Unavailable/unwritable storage does not prevent startup;
+framework I/O diagnostics go to stderr (or the general logger after #46 merges).
+Reset by closing the app and deleting only `workspace-v1.ron`; plot history is untouched.
+
+Window restoration uses eframe/winit's monitor and scaling handling (Windows clamps
+restored positions to connected monitors; other platforms depend on window-manager
+behavior). Nonfinite/extreme geometry is rejected; a first-frame size check fits the
+current monitor and relaxes the usual 950×760 minimum on smaller screens. History
+width is clamped to leave 600 logical pixels for the main area; below that budget it
+is temporarily hidden without changing its saved visibility. Wayland does not expose
+window positions and controls placement itself. Restart, disconnected-monitor and
+DPI behavior still needs graphical platform testing; the reset procedure is the
+fallback for a window manager which fails to relocate an off-screen window.
+
+Browser layout remains session-only; this native feature does not enable localStorage
+or persist browser history (#55).

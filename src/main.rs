@@ -1,6 +1,8 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 #[cfg(not(target_arch = "wasm32"))]
+mod layout;
+#[cfg(not(target_arch = "wasm32"))]
 mod startup;
 mod view;
 #[cfg(target_arch = "wasm32")]
@@ -26,6 +28,9 @@ struct Playground {
     pending: Option<Receiver<Result<Scene, String>>>,
     history: Store,
     history_open: bool,
+    history_width: f32,
+    #[cfg(not(target_arch = "wasm32"))]
+    layout_checked: bool,
     pending_history_request: Option<String>,
     plot_mode: PlotMode,
     curve_sampling: CurveSampling,
@@ -52,6 +57,9 @@ impl Default for Playground {
             pending: None,
             history: Store::session(),
             history_open: false,
+            history_width: 300.0,
+            #[cfg(not(target_arch = "wasm32"))]
+            layout_checked: false,
             pending_history_request: None,
             plot_mode: PlotMode::Auto,
             curve_sampling: CurveSampling::default(),
@@ -169,10 +177,15 @@ impl Playground {
         }
         let mut restore = None;
         let mut retry = None;
+        let max_width = (ui.available_width() - 600.0).clamp(0.0, 360.0);
+        // A monitor smaller than the normal minimum must still retain a canvas.
+        if max_width < 120.0 {
+            return None;
+        }
         let panel = egui::Panel::right("history_panel")
-            .default_size(300.0)
-            .min_size(260.0)
-            .max_size((ui.available_width()-600.0).clamp(260.0,360.0))
+            .default_size(self.history_width.clamp(120.0,max_width))
+            .min_size(260.0_f32.min(max_width))
+            .max_size(max_width)
             .resizable(true)
             .show(ui, |ui| {
                 ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
@@ -255,6 +268,7 @@ impl Playground {
         if let Some(snapshot) = restore {
             self.restore_snapshot(snapshot);
         }
+        self.history_width = panel.response.rect.width().clamp(260.0, 360.0);
         Some(panel.response.rect)
     }
 }
@@ -465,7 +479,24 @@ impl Playground {
 
 impl eframe::App for Playground {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if !self.layout_checked {
+            layout::fit_to_monitor(ui.ctx());
+            self.layout_checked = true;
+        }
         self.draw(ui);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        layout::Layout {
+            history_open: self.history_open,
+            history_width: self.history_width,
+            ..Default::default()
+        }
+        .save(storage);
+    }
+    fn persist_egui_memory(&self) -> bool {
+        false
     }
 }
 
@@ -491,6 +522,9 @@ fn run(simulate_error: bool) -> eframe::Result {
         ))));
     }
     let options = eframe::NativeOptions {
+        persistence_path: layout::storage_path(),
+        persist_window: true,
+        window_builder: Some(Box::new(layout::sanitize_window)),
         viewport: egui::ViewportBuilder::default()
             .with_icon(
                 eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon/app-256.png"))
@@ -505,8 +539,11 @@ fn run(simulate_error: bool) -> eframe::Result {
         options,
         Box::new(|cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
+            let saved_layout = layout::Layout::load(cc.storage);
             Ok(Box::new(Playground {
                 history: Store::local(),
+                history_open: saved_layout.history_open,
+                history_width: saved_layout.history_width,
                 ..Default::default()
             }))
         }),
@@ -521,6 +558,40 @@ fn main() {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restored_panel_width_is_clamped_and_small_windows_keep_canvas_space() {
+        for (width, expected_panel) in [(1150.0, true), (950.0, true), (650.0, false)] {
+            let ctx = egui::Context::default();
+            let mut app = Playground {
+                history_open: true,
+                history_width: 340.0,
+                ..Default::default()
+            };
+            for _ in 0..2 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 760.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let available = ui.available_width();
+                        let panel = app.history_ui(ui);
+                        assert_eq!(panel.is_some(), expected_panel);
+                        assert!(ui.available_width() >= available.min(600.0) - 2.0);
+                        if let Some(panel) = panel {
+                            assert!(panel.width() <= 360.0);
+                        }
+                    },
+                );
+                output.textures_delta.clear();
+            }
+            assert!(app.history_open);
+        }
+    }
 
     #[test]
     fn exploration_controls_leave_bottom_inspection_visible_at_minimum_size() {
