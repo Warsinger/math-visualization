@@ -493,6 +493,7 @@ impl eframe::App for Playground {
     #[cfg(not(target_arch = "wasm32"))]
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         layout::Layout {
+            axis_markers: self.axis_markers,
             history_open: self.history_open,
             history_width: self.history_width,
             ..Default::default()
@@ -548,6 +549,7 @@ fn run(simulate_error: bool) -> eframe::Result {
                 history: Store::local(),
                 history_open: saved_layout.history_open,
                 history_width: saved_layout.history_width,
+                axis_markers: saved_layout.axis_markers,
                 ..Default::default()
             }))
         }),

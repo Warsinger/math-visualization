@@ -2,12 +2,17 @@
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 pub const KEY: &str = "workspace_layout_v1";
+fn markers_default() -> bool {
+    true
+}
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Layout {
     pub version: u32,
     pub history_open: bool,
     pub history_width: f32,
+    #[serde(default = "markers_default")]
+    pub axis_markers: bool,
 }
 impl Default for Layout {
     fn default() -> Self {
@@ -15,6 +20,7 @@ impl Default for Layout {
             version: 1,
             history_open: false,
             history_width: 300.0,
+            axis_markers: true,
         }
     }
 }
@@ -150,6 +156,19 @@ mod tests {
             Layout::decode(r#"{"version":1,"history_open":true,"history_width":-100}"#).unwrap();
         assert_eq!(small.history_width, 260.0);
         assert_eq!(Layout::load(None), Layout::default());
+    }
+    #[test]
+    fn marker_preference_roundtrips_and_older_layouts_keep_default_visibility() {
+        let old =
+            Layout::decode(r#"{"version":1,"history_open":true,"history_width":320}"#).unwrap();
+        assert!(old.axis_markers);
+        let mut storage = Memory::default();
+        Layout {
+            axis_markers: false,
+            ..Default::default()
+        }
+        .save(&mut storage);
+        assert!(!Layout::load(Some(&storage)).axis_markers);
     }
     #[test]
     fn invalid_and_small_window_values_are_sanitized() {
