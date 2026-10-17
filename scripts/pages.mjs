@@ -80,8 +80,15 @@ if (command === 'pause' || command === 'resume') {
 } else if (command === 'cleanup') {
   if (target !== 'preview') throw new Error('Cleanup must target preview; production uses undeploy');
   // A manual cleanup must also fence uploads already queued for an open PR.
-  state.previews[pr.number] = Math.max(state.previews[pr.number] ?? 0, Number.isFinite(cutoff) ? cutoff : Date.now());
-  await saveState(state.paused, false);
+  if (!Number.isFinite(cutoff)) {
+    state.previews[pr.number] = Math.max(state.previews[pr.number] ?? 0, Date.now());
+    await saveState(state.paused, false);
+  } else if (state.previews[pr.number] !== undefined && state.previews[pr.number] <= cutoff) {
+    // GitHub close history now fences this PR. Retire obsolete manual barriers
+    // instead of accumulating a control entry for every closed/no-preview PR.
+    delete state.previews[pr.number];
+    await saveState(state.paused, false);
+  }
   await removeDeployments(cf, selected);
   const remaining = (await list()).filter(d => previewMatches(d, pr, commits, cutoff));
   if (remaining.length) throw new Error('Matching previews remain after cleanup; retry visibly');
@@ -112,7 +119,7 @@ if (command === 'pause' || command === 'resume') {
   }
   state = stateOf((await cf()).result);
   if (!canPublish(state, started, pr, process.env.GITHUB_SHA, lastClosed)) { console.log('Paused, stale, closed or superseded run: publishing skipped'); process.exit(0); }
-  const marker = `MP1:${JSON.stringify({ repo: repository, pr: pr?.number ?? null, branch: process.env.GITHUB_REF_NAME, sha: process.env.GITHUB_SHA, created: started, run: process.env.GITHUB_RUN_ID })}`;
+  const marker = `MP1:${JSON.stringify({ repo: repository, pr: pr?.number ?? null, branch: process.env.GITHUB_REF_NAME, sha: process.env.GITHUB_SHA, created: started, run: process.env.GITHUB_RUN_ID, attempt: process.env.GITHUB_RUN_ATTEMPT })}`;
   await upload('dist/web', pr ? `pr-${pr.number}` : 'main', marker);
   const uploaded = (await list()).find(d => d.deployment_trigger?.metadata?.commit_message === marker && d.environment === (pr ? 'preview' : 'production'));
   if (!uploaded || !/^https:\/\/[a-z0-9.-]+\.pages\.dev\/?$/.test(uploaded.url)) throw new Error('Cannot verify uploaded app URL');
