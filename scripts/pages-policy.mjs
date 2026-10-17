@@ -7,7 +7,7 @@ export function parseOptions(args) {
 }
 
 export const repository = 'Warsinger/math-visualization';
-export const projectName = 'math-playground';
+export const projectName = 'math-viz';
 export const stateKey = 'MP_PUBLISH_STATE';
 
 export function stateOf(project) {

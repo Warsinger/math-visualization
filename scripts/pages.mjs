@@ -14,7 +14,7 @@ const target = value('--target');
 if (!['status', 'publish', 'pause', 'resume', 'undeploy', 'cleanup'].includes(command)) throw new Error('Specify status, publish, pause, resume, undeploy or cleanup');
 if (!['production', 'preview'].includes(target)) throw new Error('Explicit --target production|preview required');
 if (apply && (process.env.GITHUB_ACTIONS !== 'true' || process.env.PAGES_SERIALIZED !== 'true')) throw new Error('Writes require the serialized GitHub workflow; local commands are dry-run only');
-if (apply && target === 'production' && command !== 'publish' && value('--confirm') !== 'math-playground:production') throw new Error('Production confirmation must be math-playground:production');
+if (apply && target === 'production' && command !== 'publish' && value('--confirm') !== 'math-viz:production') throw new Error('Production confirmation must be math-viz:production');
 if (target === 'preview' && ['pause', 'resume', 'undeploy'].includes(command)) throw new Error('Use cleanup for previews');
 const account = process.env.CLOUDFLARE_ACCOUNT_ID;
 if (!/^[a-f0-9]{32}$/.test(account ?? '') || !process.env.CLOUDFLARE_API_TOKEN) throw new Error('Missing/invalid Cloudflare credentials');
@@ -31,6 +31,7 @@ const gh = (path, method, body) => request(`https://api.github.com/repos/${repos
 const ghList = path => collectPages(async page => ({ result: await gh(`${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`) }));
 const list = () => collectPages(async page => { const data = await cf(`/deployments?page=${page}`); return { result: data.result, totalPages: data.result_info?.total_pages, pageSize: data.result_info?.per_page ?? null }; });
 let project = (await cf()).result;
+if (project.subdomain !== `${projectName}.pages.dev`) throw new Error('Unexpected Pages hostname; refusing to operate');
 if (project.production_branch !== 'main') throw new Error('Production branch must be main');
 let state = stateOf(project);
 const deployments = await list();

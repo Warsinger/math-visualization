@@ -1,6 +1,6 @@
 # Cloudflare Pages deployment
 
-Target: **https://math-playground-3mq.pages.dev/**, Direct Upload project `math-playground`, production branch `main`, in the owner's Cloudflare account. Cloudflare assigned this hostname because the originally requested `math-playground.pages.dev` was unavailable.
+Target: **https://math-viz.pages.dev/**, Direct Upload project `math-viz`, production branch `main`, in the owner's Cloudflare account. Issue #63 migrates from the original `math-playground` project at https://math-playground-3mq.pages.dev/. That site remains online with its last build and receives no further updates after this migration merges; retirement or redirection is separate scope. The replacement project was created through the dashboard, with all uploads performed through the guarded workflow. The existing account-scoped Pages token is reused, with no additional permissions or paid resources. Scripts verify the exact hostname before operating.
 
 Uses free Pages static hosting and the repository's GitHub Actions allowance. No Functions, storage, custom domain, paid plan or Cloudflare Git build is needed. Account/Actions usage limits still apply. See [Pages limits](https://developers.cloudflare.com/pages/platform/limits/) and [Direct Upload CI](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/).
 
@@ -10,7 +10,7 @@ Uses free Pages static hosting and the repository's GitHub Actions allowance. No
 
 1. Create a Cloudflare custom account API token with **Cloudflare Pages: Edit** only in the hosting account. Avoid global keys and unrelated DNS, billing or Workers permissions. This permission manages Pages projects in that account; it is not limited to this GitHub repository. Choose an expiration and rotate before it expires.
 2. Add repository Actions secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` directly in GitHub Settings. Never commit credentials or paste them into issues/chat. GitHub cannot reveal a saved secret's value; replace it when rotating.
-3. Create the Direct Upload project once through **Workers & Pages → Create application → Continue to Pages → Upload assets**, or `wrangler pages project create math-playground --production-branch main`. Do not connect a second Git-triggered Cloudflare build.
+3. Create the Direct Upload project once through **Workers & Pages → Create application → Continue to Pages → Upload assets**, or `wrangler pages project create math-viz --production-branch main`. Do not connect a second Git-triggered Cloudflare build.
 4. Run **Rust checks → Run workflow** on the chosen branch with **deploy** enabled. A successful upload verifies the actual token, account and project access. Dashboard sign-in alone does not validate CI credentials.
 
 The builder GitHub App has no secrets administration permission; the owner installs/rotates secrets directly. The workflow uses a read-only GitHub token and exposes Cloudflare credentials only to its deployment job. PR runs never deploy or receive those credentials.
@@ -47,7 +47,7 @@ In **Rust checks → Run workflow**, leave **deploy** disabled and select a **pa
 | `resume` | Explicitly enables publishing again; does not itself redeploy. Start a new deployment run afterward. |
 | `undeploy-production` | First persists pause, publishes maintenance content to main, verifies that it is canonical, then removes every older production deployment. |
 
-All operations default to dry run. Enable **apply** to mutate. Production pause/resume/undeploy also require **confirm: `math-playground:production`**. Actual production undeploy requires separate owner authorization; agreement to the mechanism alone is not authorization to execute it.
+All operations default to dry run. Enable **apply** to mutate. Production pause/resume/undeploy also require **confirm: `math-viz:production`**. Actual production undeploy requires separate owner authorization; agreement to the mechanism alone is not authorization to execute it.
 
 **Offline behavior agreed with the owner:** the production hostname and the maintenance deployment URL remain reachable with a static **Application offline** page, HTTP **200**, and `no-store`. Missing app/asset paths return maintenance HTML with **404**. This does not delete the Pages project or token. Old production deployment URLs are deleted so they cannot expose an older app or become rollback targets. Unrelated preview deployments remain available and are listed by the dry run; taking production offline does not remove previews. Already downloaded client code and browser caches cannot be recalled, and CDN deletion may take time to propagate.
 
