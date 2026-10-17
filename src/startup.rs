@@ -5,7 +5,7 @@ pub fn report(error: &str, log: &crate::logging::Log) {
         "Math Playground could not start.\n\n{error}\n\n{}",
         log.description()
     );
-    eprintln!("{message}");
+    crate::logging::diagnostic(&message);
     #[cfg(windows)]
     {
         use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};

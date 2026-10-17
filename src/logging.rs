@@ -10,6 +10,15 @@ use tracing_subscriber::{
 const LIMIT: u64 = 2 * 1024 * 1024;
 const RECORD_LIMIT: usize = 64 * 1024;
 
+fn write_diagnostic(writer: &mut impl Write, message: &str) {
+    // Unlike eprintln!, a failed stderr write must never panic, especially
+    // when this fallback is reached from Record::drop or the panic hook.
+    let _ = writeln!(writer, "{message}");
+}
+pub fn diagnostic(message: &str) {
+    write_diagnostic(&mut io::stderr().lock(), message);
+}
+
 #[derive(Clone)]
 pub struct Log {
     path: Option<PathBuf>,
@@ -26,7 +35,10 @@ impl Log {
         if let Ok(mut failure) = self.failure.lock() {
             *failure = Some(error.to_string());
         }
-        eprintln!("Application logging unavailable: {}", error.to_string());
+        diagnostic(&format!(
+            "Application logging unavailable: {}",
+            error.to_string()
+        ));
     }
     pub fn description(&self) -> String {
         if let Ok(failure) = self.failure.lock()
@@ -164,6 +176,47 @@ pub fn init() -> Log {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn failed_fallback_writer_does_not_panic() {
+        struct Broken;
+        impl Write for Broken {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::ErrorKind::BrokenPipe.into())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Err(io::ErrorKind::BrokenPipe.into())
+            }
+        }
+        write_diagnostic(&mut Broken, "Application logging unavailable");
+        write_diagnostic(
+            &mut Broken,
+            "Original startup failure must still reach its dialog",
+        );
+    }
+    #[test]
+    fn contended_log_lock_is_nonfatal_and_later_events_recover() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("application.jsonl");
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(path.with_extension("lock"))
+            .unwrap();
+        lock.try_lock().unwrap();
+        let log = Log::new(Some(path.clone()));
+        let mut record = log.make_writer();
+        record.write_all(b"blocked\n").unwrap();
+        drop(record);
+        assert!(log.description().contains("unavailable"));
+        assert!(!path.exists());
+        drop(lock);
+        let mut record = log.make_writer();
+        record.write_all(b"recovered\n").unwrap();
+        drop(record);
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "recovered\n");
+    }
     #[test]
     fn structured_records_append_and_preserve_utc_timestamps() {
         let dir = tempfile::tempdir().unwrap();
