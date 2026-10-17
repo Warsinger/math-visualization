@@ -48,13 +48,15 @@ pub fn storage_path() -> Option<std::path::PathBuf> {
     directories::BaseDirs::new().map(|b| b.data_local_dir().join("MathPlayground/workspace-v1.ron"))
 }
 // eframe clamps persisted window size/monitor position before this hook. Reject
-// nonfinite values and ensure saved tiny dimensions cannot bypass the UI minimum.
+// nonfinite values without enlarging the already monitor-clamped size. The
+// normal UI minimum is applied only once the active monitor is known.
 pub fn sanitize_window(mut viewport: egui::ViewportBuilder) -> egui::ViewportBuilder {
     let size = viewport
         .inner_size
-        .filter(|s| s.is_finite())
-        .unwrap_or(egui::vec2(1150.0, 760.0));
-    viewport.inner_size = Some(size.clamp(egui::vec2(950.0, 760.0), egui::vec2(16384.0, 16384.0)));
+        .filter(|s| s.is_finite() && s.x > 0.0 && s.y > 0.0)
+        .unwrap_or(egui::vec2(64.0, 64.0));
+    viewport.inner_size = Some(size.min(egui::vec2(16384.0, 16384.0)));
+    viewport.min_inner_size = Some(egui::vec2(950.0, 760.0).min(size));
     if viewport
         .position
         .is_some_and(|p| !p.is_finite() || p.x.abs() > 100_000.0 || p.y.abs() > 100_000.0)
@@ -139,13 +141,41 @@ mod tests {
                 .with_inner_size([f32::NAN, 0.0])
                 .with_position([f32::INFINITY, 0.0]),
         );
-        assert_eq!(viewport.inner_size, Some(egui::vec2(1150.0, 760.0)));
+        assert_eq!(viewport.inner_size, Some(egui::vec2(64.0, 64.0)));
         assert!(viewport.position.is_none());
         assert_eq!(
             sanitize_window(egui::ViewportBuilder::default().with_inner_size([64.0, 64.0]))
                 .inner_size,
-            Some(egui::vec2(950.0, 760.0))
+            Some(egui::vec2(64.0, 64.0))
         );
+    }
+    #[test]
+    fn startup_hook_preserves_framework_monitor_clamp_before_first_frame() {
+        for monitor in [
+            egui::vec2(800.0, 600.0),
+            egui::vec2(640.0, 480.0),
+            egui::vec2(1920.0, 1080.0),
+        ] {
+            for requested in [
+                egui::vec2(1150.0, 760.0),
+                egui::vec2(3000.0, 2000.0),
+                egui::vec2(64.0, 64.0),
+            ] {
+                // eframe's viewport_builder clamps restored/default inner_size
+                // before invoking NativeOptions.window_builder.
+                let framework_size = requested.min(monitor);
+                let before_creation = sanitize_window(
+                    egui::ViewportBuilder::default()
+                        .with_inner_size(framework_size)
+                        .with_min_inner_size([950.0, 760.0]),
+                );
+                assert_eq!(before_creation.inner_size, Some(framework_size));
+                assert!(before_creation.min_inner_size.unwrap().x <= framework_size.x);
+                assert!(before_creation.min_inner_size.unwrap().y <= framework_size.y);
+                let (_, after_first_frame) = monitor_sizes(framework_size, monitor);
+                assert!(after_first_frame.x <= monitor.x && after_first_frame.y <= monitor.y);
+            }
+        }
     }
     #[test]
     fn smaller_monitor_reduces_minimum_and_keeps_window_size_usable() {
