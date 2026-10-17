@@ -90,7 +90,7 @@ test('workflow parent cancellation only affects PR checks; all mutations share n
   const close = await readFile(new URL('../.github/workflows/pages-close.yml', import.meta.url), 'utf8');
   assert.match(ci, /cancel-in-progress: \$\{\{ github.event_name == 'pull_request' \}\}/);
   assert.match(ci, /github.event_name == 'pull_request' && github.ref \|\| github.run_id/);
-  for (const text of [ci, close]) assert.match(text, /group: cloudflare-math-playground-lifecycle\s+cancel-in-progress: false\s+queue: max/);
+  for (const text of [ci, close]) assert.match(text, /group: cloudflare-math-viz-lifecycle\s+cancel-in-progress: false\s+queue: max/);
   assert.match(close, /pull_request_target:\s+types: \[closed\]/);
   assert.match(close, /ref: main/);
   assert.ok(!close.includes('head.sha') && !close.includes('download-artifact'));
