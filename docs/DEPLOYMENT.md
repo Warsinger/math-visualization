@@ -67,7 +67,7 @@ The build hashes JS and Wasm together into `assets/<pair-hash>/`. HTML revalidat
 
 After initial deployment and an update:
 
-1. Open the URL in a fresh desktop browser session. Verify startup, helix rendering, typed `x^2`, a sphere, camera drag/zoom, and invalid input preserving the plot. Inspect Console/Network. History remains session-only.
+1. Open the URL in a fresh desktop browser session. Verify startup, helix rendering, typed `x^2`, a sphere, camera drag/zoom, and invalid input preserving the plot. Inspect Console/Network. History is browser-local on the current origin; use the History panel to inspect save warnings.
 2. Check HTML and asset cache/MIME headers. Keep an old HTML/asset URL before updating, reload with caching enabled, and confirm a changed pair produces a new URL. Existing loaded tabs keep their app until reload. An old page racing deployment may need reload if its old asset is gone; it cannot silently load a mismatched pair.
 3. Record source SHA, deployment ID/URL, browser/version and observed results on the PR. A green upload alone is not interactive validation.
 

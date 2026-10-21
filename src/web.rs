@@ -10,6 +10,28 @@ fn status(message: &str) {
     }
 }
 
+const HISTORY_KEY: &str = "math-playground.history.v1";
+struct LocalHistory;
+impl math_playground::history::BrowserStorage for LocalHistory {
+    fn read(&self) -> Result<Option<String>, String> {
+        storage()?
+            .get_item(HISTORY_KEY)
+            .map_err(|_| "Browser history could not be read.".into())
+    }
+    fn write(&self, value: &str) -> Result<(), String> {
+        storage()?
+            .set_item(HISTORY_KEY, value)
+            .map_err(|_| "Browser storage is full or blocked.".into())
+    }
+}
+fn storage() -> Result<web_sys::Storage, String> {
+    web_sys::window()
+        .ok_or("Browser window unavailable.")?
+        .local_storage()
+        .map_err(|_| "Browser storage is blocked.".to_owned())?
+        .ok_or("Browser storage unavailable.".into())
+}
+
 pub fn launch() {
     wasm_bindgen_futures::spawn_local(async {
         let canvas = web_sys::window()
@@ -27,13 +49,16 @@ pub fn launch() {
                 eframe::WebOptions::default(),
                 Box::new(|cc| {
                     cc.egui_ctx.set_theme(eframe::egui::ThemePreference::Dark);
-                    Ok(Box::new(super::Playground::default()))
+                    Ok(Box::new(super::Playground {
+                        history: math_playground::history::Store::browser(Box::new(LocalHistory)),
+                        ..Default::default()
+                    }))
                 }),
             )
             .await;
         match result {
             Ok(()) => status(
-                "Browser app · session-only history · large plots may briefly pause interaction",
+                "Browser app · browser-local history (see History for save status) · large plots may briefly pause interaction",
             ),
             Err(error) => {
                 web_sys::console::error_1(&error);

@@ -260,7 +260,7 @@ impl Playground {
         });
         ui.label("Newest first · up to 200 entries · timestamps in UTC");
         #[cfg(target_arch = "wasm32")]
-        ui.small("Browser session only: history resets when this page reloads.");
+        ui.small("Browser-local history: saved on changes on this origin only; may be cleared by your browser. Tabs do not live-sync; the last successful save wins. Clear saves an empty history unless saving is disabled (see warning).");
         ui.small("Restore uses saved plot settings. Edit/retry fills the input; current settings apply when submitted.");
         if let Some(path) = &self.history.path {
             ui.label(format!("Storage: {}", path.display()));
