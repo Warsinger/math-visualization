@@ -6,7 +6,7 @@ Track and discuss future features in [GitHub Issues](https://github.com/Warsinge
 
 See the [UI guide with screenshots](docs/UI-GUIDE.md) for typed input, sampling controls, and camera basics.
 
-To run the same playground in a local desktop browser, see the [browser build and run guide](docs/BROWSER.md). Browser history lasts until page reload; the native app retains its existing history files.
+To run the same playground in a local desktop browser, see the [browser build and run guide](docs/BROWSER.md). Browser history survives reloads on the same origin when browser storage is available; storage failures fall back to session history with a warning. The native app retains its existing history files.
 
 Cloudflare hosting and CI publishing are described in the [deployment guide](docs/DEPLOYMENT.md).
 
