@@ -95,7 +95,7 @@ jobs:
       PAGES_SERIALIZED: 'true'
       PREVIEW_PR: ${{ inputs.preview_pr }}
       TARGET: ${{ github.ref == 'refs/heads/main' && 'production' || 'preview' }}
-      PAGES_HANDOFF: ${{ runner.temp }}/pages-publish-handoff.json
+      PAGES_HANDOFF: .pages-publish-handoff.json
     steps:
       - uses: actions/checkout@v6
         with:
@@ -276,3 +276,4 @@ jobs:
             dist/math-playground-${{ matrix.target }}.sha256
           if-no-files-found: error
           retention-days: 14
+
