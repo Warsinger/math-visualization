@@ -159,7 +159,16 @@ pub fn truncate(text: &str, max: usize) -> String {
     text[..end].to_owned()
 }
 
+/// Small synchronous adapter: implementations must replace one value atomically.
+/// The browser uses localStorage; tests exercise the same persistence policy.
+pub trait BrowserStorage {
+    fn read(&self) -> Result<Option<String>, String>;
+    fn write(&self, value: &str) -> Result<(), String>;
+}
+
 pub struct Store {
+    browser: Option<Box<dyn BrowserStorage>>,
+
     pub path: Option<PathBuf>,
     pub history: History,
     pub warning: Option<String>,
@@ -169,11 +178,48 @@ impl Store {
     /// In-memory history, with no filesystem access or persistence warnings.
     pub fn session() -> Self {
         Self {
+            browser: None,
             path: None,
             history: History::default(),
             warning: None,
             blocked: true,
         }
+    }
+    /// Load validated snapshots without rebuilding or changing the active scene.
+    pub fn browser(storage: Box<dyn BrowserStorage>) -> Self {
+        let mut store = Self::session();
+        let loaded = storage.read().and_then(|value| {
+            value.map_or_else(
+                || Ok(History::default()),
+                |text| History::decode(text.as_bytes()),
+            )
+        });
+        match loaded {
+            Ok(history) => {
+                store.history = history;
+                store.blocked = false;
+            }
+            Err(error) => {
+                store.warning = Some(format!(
+                    "{error} Using session-only history; saved browser data is preserved. Clear affects this session only. Repair/remove the browser history key and reload to enable saving."
+                ));
+            }
+        }
+        store.browser = Some(storage);
+        store
+    }
+    fn persist_browser(&mut self) {
+        if self.blocked {
+            return;
+        }
+        let result = serde_json::to_string(&self.history)
+            .map_err(|e| e.to_string())
+            .and_then(|text| {
+                // Apply the same version, snapshot, count and byte budget on writes.
+                History::decode(text.as_bytes())?;
+                self.browser.as_ref().unwrap().write(&text)
+            });
+        self.warning = result.err().map(|e| format!("History is available in this session but could not be saved: {e}. The previous saved history is preserved; the next history change will retry."));
     }
     #[cfg(not(target_arch = "wasm32"))]
     pub fn local() -> Self {
@@ -184,6 +230,7 @@ impl Store {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn open(path: Option<PathBuf>) -> Self {
         let mut store = Self {
+            browser: None,
             path,
             history: History::default(),
             warning: None,
@@ -226,10 +273,16 @@ impl Store {
     }
     #[cfg(target_arch = "wasm32")]
     fn persist(&mut self) {
-        debug_assert!(self.blocked, "Browser stores must be session-only");
+        if self.browser.is_some() {
+            self.persist_browser();
+        }
     }
     #[cfg(not(target_arch = "wasm32"))]
     fn persist(&mut self) {
+        if self.browser.is_some() {
+            self.persist_browser();
+            return;
+        }
         if self.blocked {
             return;
         }
@@ -255,6 +308,120 @@ impl Store {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    type MemoryState = std::rc::Rc<std::cell::RefCell<(Option<String>, bool, bool, usize)>>;
+    #[derive(Clone, Default)]
+    struct Memory(MemoryState);
+    impl BrowserStorage for Memory {
+        fn read(&self) -> Result<Option<String>, String> {
+            let state = self.0.borrow();
+            if state.1 {
+                Err("blocked".into())
+            } else {
+                Ok(state.0.clone())
+            }
+        }
+        fn write(&self, value: &str) -> Result<(), String> {
+            let mut state = self.0.borrow_mut();
+            if state.2 {
+                return Err("quota".into());
+            }
+            state.0 = Some(value.into());
+            state.3 += 1;
+            Ok(())
+        }
+    }
+    fn browser_record(store: &mut Store, request: &str) {
+        store.record(
+            request.into(),
+            Outcome::Success {
+                snapshot: Snapshot::Curve {
+                    equation: "x^2".into(),
+                    sampling: crate::curve::CurveSampling::default(),
+                },
+            },
+        );
+    }
+    #[test]
+    fn browser_reload_restore_clear_and_multiple_tabs() {
+        let memory = Memory::default();
+        let mut first = Store::browser(Box::new(memory.clone()));
+        browser_record(&mut first, "plot x^2");
+        let mut second = Store::browser(Box::new(memory.clone()));
+        assert_eq!(first.history.entries, second.history.entries);
+        let mut scene = Scene::default();
+        if let Outcome::Success { snapshot } = &second.history.entries[0].outcome {
+            snapshot.restore(&mut scene).unwrap();
+        }
+        assert_eq!(scene.curve.unwrap().source, "x^2");
+        second.clear();
+        assert!(
+            Store::browser(Box::new(memory.clone()))
+                .history
+                .entries
+                .is_empty()
+        );
+        // Tabs own independent snapshots. Last successful save wins, even after Clear.
+        browser_record(&mut first, "second request");
+        assert_eq!(
+            Store::browser(Box::new(memory.clone()))
+                .history
+                .entries
+                .len(),
+            2
+        );
+        assert_eq!(memory.0.borrow().3, 3);
+        assert!(memory.0.borrow().0.as_ref().unwrap().len() < MAX_FILE_BYTES as usize);
+    }
+    #[test]
+    fn browser_failures_preserve_saved_data_and_session_changes() {
+        for saved in [
+            "broken".into(),
+            r#"{"version":2,"entries":[]}"#.into(),
+            " ".repeat(MAX_FILE_BYTES as usize + 1),
+        ] {
+            let memory = Memory::default();
+            memory.0.borrow_mut().0 = Some(saved.clone());
+            let mut store = Store::browser(Box::new(memory.clone()));
+            assert!(store.warning.is_some());
+            browser_record(&mut store, "plot x^2");
+            store.clear();
+            assert_eq!(memory.0.borrow().0.as_ref(), Some(&saved));
+            assert_eq!(memory.0.borrow().3, 0);
+        }
+        let memory = Memory::default();
+        memory.0.borrow_mut().1 = true;
+        let mut blocked = Store::browser(Box::new(memory.clone()));
+        browser_record(&mut blocked, "plot x^2");
+        assert_eq!(blocked.history.entries.len(), 1);
+        assert!(blocked.warning.is_some());
+        memory.0.borrow_mut().1 = false;
+        let mut store = Store::browser(Box::new(memory.clone()));
+        browser_record(&mut store, "initial");
+        let saved = memory.0.borrow().0.clone();
+        memory.0.borrow_mut().2 = true;
+        browser_record(&mut store, "unsaved");
+        assert_eq!(store.history.entries.len(), 2);
+        assert!(store.warning.is_some());
+        assert_eq!(memory.0.borrow().0, saved);
+        memory.0.borrow_mut().2 = false;
+        browser_record(&mut store, "retry");
+        assert!(store.warning.is_none());
+        assert_eq!(
+            Store::browser(Box::new(memory.clone()))
+                .history
+                .entries
+                .len(),
+            3
+        );
+        for _ in 0..210 {
+            browser_record(&mut store, "bounded");
+        }
+        assert_eq!(
+            Store::browser(Box::new(memory)).history.entries.len(),
+            MAX_ENTRIES
+        );
+    }
+
     #[test]
     fn session_history_records_and_clears_without_a_storage_path_or_warning() {
         let mut store = Store::session();
