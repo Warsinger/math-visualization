@@ -1,5 +1,5 @@
 // All writes run inside the shared GitHub lifecycle concurrency queue.
-import { mkdtemp, writeFile, appendFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, appendFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -7,14 +7,15 @@ import { repository, projectName, stateKey, stateOf, canPublish, previewMatches,
 
 const args = process.argv.slice(2);
 const command = args.shift();
+const publishing = ['publish', 'prepare-publish', 'finish-publish'].includes(command);
 const options = parseOptions(args);
 const value = name => options[name.replace(/^--/, '')];
 const apply = options.apply;
 const target = value('--target');
-if (!['status', 'publish', 'pause', 'resume', 'undeploy', 'cleanup'].includes(command)) throw new Error('Specify status, publish, pause, resume, undeploy or cleanup');
+if (!publishing && !['status', 'pause', 'resume', 'undeploy', 'cleanup'].includes(command)) throw new Error('Specify status, publish, pause, resume, undeploy or cleanup');
 if (!['production', 'preview'].includes(target)) throw new Error('Explicit --target production|preview required');
 if (apply && (process.env.GITHUB_ACTIONS !== 'true' || process.env.PAGES_SERIALIZED !== 'true')) throw new Error('Writes require the serialized GitHub workflow; local commands are dry-run only');
-if (apply && target === 'production' && command !== 'publish' && value('--confirm') !== 'math-viz:production') throw new Error('Production confirmation must be math-viz:production');
+if (apply && target === 'production' && !publishing && value('--confirm') !== 'math-viz:production') throw new Error('Production confirmation must be math-viz:production');
 if (target === 'preview' && ['pause', 'resume', 'undeploy'].includes(command)) throw new Error('Use cleanup for previews');
 const account = process.env.CLOUDFLARE_ACCOUNT_ID;
 if (!/^[a-f0-9]{32}$/.test(account ?? '') || !process.env.CLOUDFLARE_API_TOKEN) throw new Error('Missing/invalid Cloudflare credentials');
@@ -111,23 +112,39 @@ if (command === 'pause' || command === 'resume') {
   const message = `MP-OFFLINE:${process.env.GITHUB_RUN_ID}:${process.env.GITHUB_RUN_ATTEMPT}`;
   const current = await offlineProduction({ pause: () => saveState(true), upload: () => upload(directory, 'main', message), getProject: async () => (await cf()).result, list, remove: (items, keep) => removeDeployments(cf, items, keep) }, message);
   console.log(JSON.stringify({ offlineUrl: current.url, productionHostname: project.subdomain, status: 'maintenance HTML 200; missing assets 404', previewUrlsUnaffected: true }));
-} else if (command === 'publish') {
-  const run = await gh(`/actions/runs/${process.env.GITHUB_RUN_ID}`);
-  const started = Date.parse(run.created_at);
-  if (!Number.isFinite(started)) throw new Error('Cannot verify run creation time');
-  let lastClosed = 0;
-  if (pr) {
-    lastClosed = Math.max(0, ...(await ghList(`/issues/${pr.number}/events`)).filter(e => e.event === 'closed').map(e => Date.parse(e.created_at)));
-    if (run.head_branch !== pr.head.ref || process.env.GITHUB_REF_NAME !== pr.head.ref) throw new Error('Run branch does not match PR');
-    pr = await gh(`/pulls/${pr.number}`);
+} else if (publishing) {
+  let marker;
+  if (command === 'finish-publish') {
+    const handoff = JSON.parse(await readFile(process.env.PAGES_HANDOFF, 'utf8'));
+    if (handoff.sha !== process.env.GITHUB_SHA || handoff.run !== process.env.GITHUB_RUN_ID || handoff.attempt !== process.env.GITHUB_RUN_ATTEMPT || handoff.pr !== (pr?.number ?? null)) throw new Error('Invalid publish handoff');
+    marker = handoff.marker;
   } else {
-    if (process.env.GITHUB_REF !== 'refs/heads/main') throw new Error('Production publish requires main');
-    if ((await gh('/git/ref/heads/main')).object.sha !== process.env.GITHUB_SHA) { console.log('Stale main run: publishing skipped'); process.exit(0); }
+    const run = await gh(`/actions/runs/${process.env.GITHUB_RUN_ID}`);
+    const started = Date.parse(run.created_at);
+    if (!Number.isFinite(started)) throw new Error('Cannot verify run creation time');
+    let lastClosed = 0;
+    if (pr) {
+      lastClosed = Math.max(0, ...(await ghList(`/issues/${pr.number}/events`)).filter(e => e.event === 'closed').map(e => Date.parse(e.created_at)));
+      if (run.head_branch !== pr.head.ref || process.env.GITHUB_REF_NAME !== pr.head.ref) throw new Error('Run branch does not match PR');
+      pr = await gh(`/pulls/${pr.number}`);
+    } else {
+      if (process.env.GITHUB_REF !== 'refs/heads/main') throw new Error('Production publish requires main');
+      if ((await gh('/git/ref/heads/main')).object.sha !== process.env.GITHUB_SHA) { console.log('Stale main run: publishing skipped'); process.exit(0); }
+    }
+    state = stateOf((await cf()).result);
+    if (!canPublish(state, started, pr, process.env.GITHUB_SHA, lastClosed)) { console.log('Paused, stale, closed or superseded run: publishing skipped'); process.exit(0); }
+    marker = `MP1:${JSON.stringify({ repo: repository, pr: pr?.number ?? null, branch: process.env.GITHUB_REF_NAME, sha: process.env.GITHUB_SHA, created: started, run: process.env.GITHUB_RUN_ID, attempt: process.env.GITHUB_RUN_ATTEMPT })}`;
+    if (command === 'prepare-publish') {
+      const branch = pr ? `pr-${pr.number}` : 'main';
+      const quote = value => '"' + value.replaceAll('\\', '\\\\').replaceAll('"', '\\"') + '"';
+      const uploadCommand = 'pages deploy ' + ['dist/web', '--project-name', projectName, '--branch', branch,
+        '--commit-hash', process.env.GITHUB_SHA, '--commit-message', marker].map(quote).join(' ');
+      await writeFile(process.env.PAGES_HANDOFF, JSON.stringify({ marker, sha: process.env.GITHUB_SHA, run: process.env.GITHUB_RUN_ID, attempt: process.env.GITHUB_RUN_ATTEMPT, pr: pr?.number ?? null }));
+      await appendFile(process.env.GITHUB_OUTPUT, `publish=true\ncommand=${uploadCommand}\n`);
+      process.exit(0);
+    }
+    await upload('dist/web', pr ? `pr-${pr.number}` : 'main', marker);
   }
-  state = stateOf((await cf()).result);
-  if (!canPublish(state, started, pr, process.env.GITHUB_SHA, lastClosed)) { console.log('Paused, stale, closed or superseded run: publishing skipped'); process.exit(0); }
-  const marker = `MP1:${JSON.stringify({ repo: repository, pr: pr?.number ?? null, branch: process.env.GITHUB_REF_NAME, sha: process.env.GITHUB_SHA, created: started, run: process.env.GITHUB_RUN_ID, attempt: process.env.GITHUB_RUN_ATTEMPT })}`;
-  await upload('dist/web', pr ? `pr-${pr.number}` : 'main', marker);
   const uploaded = (await list()).find(d => d.deployment_trigger?.metadata?.commit_message === marker && d.environment === (pr ? 'preview' : 'production'));
   if (!uploaded || !/^https:\/\/[a-z0-9.-]+\.pages\.dev\/?$/.test(uploaded.url)) throw new Error('Cannot verify uploaded app URL');
   // A close during the upload is safe even before the queued close job runs.

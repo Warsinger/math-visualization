@@ -13,7 +13,7 @@ Uses free Pages static hosting and the repository's GitHub Actions allowance. No
 3. Create the Direct Upload project once through **Workers & Pages → Create application → Continue to Pages → Upload assets**, or `wrangler pages project create math-viz --production-branch main`. Do not connect a second Git-triggered Cloudflare build.
 4. Run **Rust checks → Run workflow** on the chosen branch with **deploy** enabled. A successful upload verifies the actual token, account and project access. Dashboard sign-in alone does not validate CI credentials.
 
-The builder GitHub App has no secrets administration permission; the owner installs/rotates secrets directly. The workflow uses a read-only GitHub token and exposes Cloudflare credentials only to its deployment job. PR runs never deploy or receive those credentials.
+The builder GitHub App has no secrets administration permission; the owner installs/rotates secrets directly. Build jobs use a read-only GitHub token; the publishing job grants deployment-record and preview-comment write access and exposes Cloudflare credentials only to its deployment job. PR runs never deploy or receive those credentials.
 
 The owner set the initial token to expire after **one year**. Rotate the GitHub secret before that expiration using the procedure below; an expired token prevents future deployments but does not remove an already published static site.
 
@@ -76,3 +76,14 @@ After initial deployment and an update:
 In Pages **Deployments**, select a known-good **production** deployment and **Rollback to this deployment**. Preview deployments cannot be production rollback targets. Cloudflare restores its uploaded assets without rebuilding. Also revert the bad source through a normal PR, or the next `main` push will publish it again. See [Pages rollbacks](https://developers.cloudflare.com/pages/configuration/rollbacks/). GitHub artifacts last 14 days and are not permanent rollback storage.
 
 For rotation: create an equivalent scoped token, replace the GitHub secret, validate a preview, then revoke the old token. Missing/expired credentials fail deployment without deleting the last good site. Use the lifecycle **pause** action to stop publishing while keeping normal CI running. Fixture tests cover selection, pagination, repeated cleanup, pause/close/reopen races, production exclusion, maintenance ordering/failure, comment upsert and workflow cancellation. Actual production undeploy is not part of PR validation.
+
+## Shared upload implementation
+
+The publishing job uses the pinned `cloudflare-pages-deploy/upload` composite
+action for the official Wrangler upload and linked deployment summary. The
+existing project-wide lifecycle queue surrounds preflight, upload and final
+verification in the same job. Preflight can skip paused/stale runs without
+uploading; a run-specific handoff preserves cleanup metadata for verification
+and close-during-upload reconciliation. Lifecycle scripts, policies and tests
+remain here, including the maintenance upload used by explicit undeploy.
+No production pause/resume/undeploy is executed as migration validation.

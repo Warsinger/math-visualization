@@ -65,7 +65,7 @@ jobs:
       - name: Verify JS/Wasm pairing and hosting files
         run: node scripts/verify-web.mjs
       - name: Test deployment lifecycle policies
-        run: node --test scripts/pages.test.mjs
+        run: node --test scripts/pages*.test.mjs
       - uses: actions/upload-artifact@v6
         with:
           name: browser-app
@@ -87,6 +87,15 @@ jobs:
       actions: read
       issues: read
       pull-requests: write
+      deployments: write
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      GITHUB_TOKEN: ${{ github.token }}
+      PAGES_SERIALIZED: 'true'
+      PREVIEW_PR: ${{ inputs.preview_pr }}
+      TARGET: ${{ github.ref == 'refs/heads/main' && 'production' || 'preview' }}
+      PAGES_HANDOFF: ${{ runner.temp }}/pages-publish-handoff.json
     steps:
       - uses: actions/checkout@v6
         with:
@@ -98,16 +107,21 @@ jobs:
         with:
           name: browser-app
           path: dist/web
-      - name: Publish through lifecycle guard
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          GITHUB_TOKEN: ${{ github.token }}
-          PAGES_SERIALIZED: 'true'
-          PREVIEW_PR: ${{ inputs.preview_pr }}
-          TARGET: ${{ github.ref == 'refs/heads/main' && 'production' || 'preview' }}
-        run: |
-          node scripts/pages.mjs publish --target "$TARGET" --pr "$PREVIEW_PR" --apply
+      - name: Prepare upload through lifecycle guard
+        id: guard
+        run: node scripts/pages.mjs prepare-publish --target "$TARGET" --pr "$PREVIEW_PR" --apply
+      - name: Upload through shared Cloudflare action
+        if: steps.guard.outputs.publish == 'true'
+        uses: Warsinger/cloudflare-pages-deploy/upload@e02331c579411ebc6375be6698e4fc8774c8da2b
+        with:
+          api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          github-token: ${{ github.token }}
+          command: ${{ steps.guard.outputs.command }}
+      - name: Verify upload and reconcile preview lifecycle
+        if: steps.guard.outputs.publish == 'true'
+        run: node scripts/pages.mjs finish-publish --target "$TARGET" --pr "$PREVIEW_PR" --apply
+
   pages-lifecycle:
     name: Pages lifecycle operation
     if: github.event_name == 'workflow_dispatch' && inputs.pages_action != 'none'
