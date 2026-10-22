@@ -1,0 +1,11 @@
+{
+  "name": "math-web",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@warsinger/web-shared": "https://codeload.github.com/Warsinger/web-shared/tar.gz/19f22bb1b3ee235117ec2904df42c29a34e81250"
+  },
+  "scripts": {
+    "test": "node --test scripts/*.test.mjs"
+  }
+}

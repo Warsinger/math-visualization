@@ -5,7 +5,7 @@ import { resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../dist/web/', import.meta.url));
-const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.wasm': 'application/wasm' };
+const types = { '.html': 'text/html; charset=utf-8', '.mjs': 'text/javascript', '.js': 'text/javascript; charset=utf-8', '.wasm': 'application/wasm' };
 await stat(resolve(root, 'index.html')).catch(() => { throw new Error('Build the web app first; dist/web/index.html is missing.'); });
 createServer(async (request, response) => {
   try {

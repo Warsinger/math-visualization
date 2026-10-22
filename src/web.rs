@@ -1,13 +1,12 @@
 //! Minimal local-browser bootstrap; native startup stays in main.rs.
 use wasm_bindgen::JsCast;
 
-fn status(message: &str) {
-    if let Some(element) = web_sys::window()
-        .and_then(|w| w.document())
-        .and_then(|d| d.get_element_by_id("status"))
-    {
-        element.set_text_content(Some(message));
-    }
+#[wasm_bindgen::prelude::wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = window, js_name = appReady)]
+    fn browser_ready(message: &str);
+    #[wasm_bindgen(js_namespace = window, js_name = appError)]
+    fn browser_error(message: &str);
 }
 
 const HISTORY_KEY: &str = "math-playground.history.v1";
@@ -39,7 +38,7 @@ pub fn launch() {
             .and_then(|d| d.get_element_by_id("playground"))
             .and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok());
         let Some(canvas) = canvas else {
-            status("Startup failed: canvas not found. Check browser developer console.");
+            browser_error("Startup failed: canvas not found. Check browser developer console.");
             return;
         };
         let runner = eframe::WebRunner::new();
@@ -57,12 +56,12 @@ pub fn launch() {
             )
             .await;
         match result {
-            Ok(()) => status(
+            Ok(()) => browser_ready(
                 "Browser app · browser-local history (see History for save status) · large plots may briefly pause interaction",
             ),
             Err(error) => {
                 web_sys::console::error_1(&error);
-                status(
+                browser_error(
                     "Startup failed: graphics initialization error. Check browser developer console.",
                 );
             }

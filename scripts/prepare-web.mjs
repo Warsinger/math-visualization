@@ -1,30 +1,40 @@
-// Keep each JS/Wasm pair in a content-addressed directory across deployments.
-import { createHash } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+// Keep the complete generated Rust runtime and shared frontend in one immutable release.
+import {createHash} from 'node:crypto';
+import {mkdir, readFile, rm, writeFile} from 'node:fs/promises';
+import {dirname, resolve, sep} from 'node:path';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 
-const root = fileURLToPath(new URL('../', import.meta.url));
-const input = resolve(root, 'target/web-bindgen');
-const output = resolve(root, 'dist/web');
-const js = await readFile(resolve(input, 'math_playground.js'));
-const wasm = await readFile(resolve(input, 'math_playground_bg.wasm'));
-if (wasm.length > 25 * 1024 * 1024) throw new Error('Wasm exceeds the Pages 25 MiB asset limit.');
-const hash = createHash('sha256').update(js).update(wasm).digest('hex').slice(0, 24);
-const relative = `assets/${hash}`;
-const template = await readFile(resolve(root, 'web/index.html'), 'utf8');
-if (!template.includes('./math_playground.js')) throw new Error('Bootstrap import was not found.');
-// Only clear the verified, generated output directory inside this repository.
-if (!output.startsWith(resolve(root, 'dist') + sep)) throw new Error('Invalid generated output path.');
-await rm(output, { recursive: true, force: true });
-await mkdir(resolve(output, relative), { recursive: true });
-await writeFile(resolve(output, relative, 'math_playground.js'), js);
-await writeFile(resolve(output, relative, 'math_playground_bg.wasm'), wasm);
-await writeFile(resolve(output, 'index.html'), template.replace('./math_playground.js', `./${relative}/math_playground.js`));
-await writeFile(resolve(output, '_headers'), await readFile(resolve(root, 'web/_headers')));
-for (const [source, destination] of [['favicon.ico', 'favicon.ico'], ['app-192.png', 'icon-192.png'], ['apple-touch-icon.png', 'apple-touch-icon.png']]) {
-  await writeFile(resolve(output, destination), await readFile(resolve(root, 'assets/icon', source)));
+export const runtimeNames = ['math_playground.js','math_playground_bg.wasm','app.mjs','styles.css','shared/module-runtime.mjs','shared/status.mjs','shared/canvas.css','shared/footer.css'];
+export function runtimeHash(files) {
+  const digest=createHash('sha256');
+  for(const name of runtimeNames) digest.update(name).update('\0').update(files.get(name));
+  return digest.digest('hex').slice(0,24);
 }
-// Prevent Pages' implicit SPA fallback from returning HTML for a missing Wasm URL.
-await writeFile(resolve(output, '404.html'), '<!doctype html><title>Not found</title><h1>Not found</h1>');
-console.log(`Prepared browser assets: ${relative}`);
+export async function prepareWeb(root = fileURLToPath(new URL('../', import.meta.url))) {
+  const output=resolve(root,'dist/web');
+  const files=new Map();
+  for(const name of runtimeNames) {
+    const source=name.startsWith('shared/') ? resolve(root,'node_modules/@warsinger/web-shared/browser',name.slice(7)) : resolve(root,name.startsWith('math_playground')?'target/web-bindgen':'web',name);
+    const data=await readFile(source);
+    if(data.length>25*1024*1024) throw new Error(name+' exceeds the Pages 25 MiB asset limit.');
+    files.set(name,data);
+  }
+  if(!files.get('app.mjs').toString().includes("import('./math_playground.js')")) throw new Error('Rust bootstrap import was not found.');
+  const hash=runtimeHash(files),relative=`assets/${hash}`;
+  let template=await readFile(resolve(root,'web/index.html'),'utf8');
+  for(const name of ['app.mjs','styles.css']) {
+    if(!template.includes(`"./${name}"`)) throw new Error(name+' entry reference was not found.');
+    template=template.replaceAll(`"./${name}"`,`"./${relative}/${name}"`);
+  }
+  // Only clear the verified generated output directory inside this repository.
+  if(!output.startsWith(resolve(root,'dist')+sep)) throw new Error('Invalid generated output path.');
+  await rm(output,{recursive:true,force:true});
+  for(const [name,data] of files){const target=resolve(output,relative,name);await mkdir(dirname(target),{recursive:true});await writeFile(target,data);}
+  await writeFile(resolve(output,'index.html'),template);
+  await writeFile(resolve(output,'_headers'),await readFile(resolve(root,'web/_headers')));
+  for(const [source,destination] of [['favicon.ico','favicon.ico'],['app-192.png','icon-192.png'],['apple-touch-icon.png','apple-touch-icon.png']]) await writeFile(resolve(output,destination),await readFile(resolve(root,'assets/icon',source)));
+  await writeFile(resolve(output,'404.html'),'<!doctype html><title>Not found</title><h1>Not found</h1>');
+  console.log(`Prepared browser assets: ${relative}`);
+  return {hash,relative,output};
+}
+if(process.argv[1] && import.meta.url===pathToFileURL(resolve(process.argv[1])).href) await prepareWeb();
