@@ -1,15 +1,18 @@
 // Check the actual release artifact, including its JS/Wasm pairing and MIME header.
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import {runtimeNames, runtimeHash} from './prepare-web.mjs';
 import { readFile } from 'node:fs/promises';
 
 const root = new URL('../dist/web/', import.meta.url);
 const html = await readFile(new URL('index.html', root), 'utf8');
-const path = html.match(/import\('\.\/(assets\/([a-f0-9]{24})\/math_playground\.js)'\)/);
+const path = html.match(/src="\.\/(assets\/([a-f0-9]{24})\/)app\.mjs"/);
 assert.ok(path, 'HTML must reference the versioned JS/Wasm directory');
-const js = await readFile(new URL(path[1], root));
-const wasm = await readFile(new URL(path[1].replace(/\.js$/, '_bg.wasm'), root));
-assert.equal(createHash('sha256').update(js).update(wasm).digest('hex').slice(0, 24), path[2]);
+const files=new Map();
+for(const name of runtimeNames) files.set(name,await readFile(new URL(path[1]+name,root)));
+const js=files.get('math_playground.js'),wasm=files.get('math_playground_bg.wasm');
+assert.equal(runtimeHash(files),path[2]);
+assert.ok(html.includes('./'+path[1]+'styles.css'));
+assert.ok(files.get('app.mjs').toString().includes("import('./math_playground.js')"));
 assert.ok(js.toString().includes("new URL('math_playground_bg.wasm', import.meta.url)"), 'Wasm must resolve beside its JS');
 assert.deepEqual([...wasm.subarray(0, 8)], [0, 97, 115, 109, 1, 0, 0, 0]);
 assert.ok(wasm.length < 25 * 1024 * 1024);

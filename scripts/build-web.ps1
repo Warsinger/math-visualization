@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $projectRoot
 try {
+    if (-not (Test-Path 'node_modules/@warsinger/web-shared/browser/module-runtime.mjs')) { throw 'Run npm ci --ignore-scripts first to install shared browser assets.' }
     $version = & $Bindgen --version
     if ($LASTEXITCODE -ne 0 -or $version -ne 'wasm-bindgen 0.2.129') {
         throw 'Install matching CLI: cargo install wasm-bindgen-cli --version 0.2.129 --locked'

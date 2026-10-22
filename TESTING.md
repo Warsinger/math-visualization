@@ -96,3 +96,7 @@ cargo llvm-cov report --html --output-dir dist/coverage
 ```
 
 Start review with uncovered parser/error paths, geometry budgets/domain boundaries, scene failure atomicity, persistence recovery and worker completion. Compare the per-file results and inspect source locations before adding a focused behavioral regression test. GUI ergonomics remain a separate manual decision.
+
+## Shared browser frontend
+
+Run npm ci --ignore-scripts (Node 24+), node --test scripts/*.test.mjs, the documented Rust/Wasm build, then node scripts/verify-web.mjs. New packaging tests verify real module/style references, a single content-addressed Rust/frontend release, shared-CSS/frontend-only cache invalidation and preservation of valid output on size errors. Shared status tests ensure initialization resolution is not renderer readiness and late callbacks cannot clear failures. Real rendering/resizing/egui/history checks remain manual.

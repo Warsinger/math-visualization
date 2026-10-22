@@ -87,3 +87,5 @@ uploading; a run-specific handoff preserves cleanup metadata for verification
 and close-during-upload reconciliation. Lifecycle scripts, policies and tests
 remain here, including the maintenance upload used by explicit undeploy.
 No production pause/resume/undeploy is executed as migration validation.
+
+Browser CI installs the locked shared frontend with npm ci --ignore-scripts. Its modules/CSS are hashed with the generated Rust JS/Wasm pair. Existing publication guards, serialized lifecycle queue, project/account and preview-comment policy are unchanged.

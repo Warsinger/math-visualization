@@ -4,7 +4,7 @@ The browser build uses the same Rust evaluator, geometry and egui controls as th
 
 ## Build and run
 
-Prerequisites: Rust 1.95 or newer with Cargo/rustup, PowerShell 7 (`pwsh`), Node.js 22 or newer, and a desktop browser with JavaScript, WebAssembly and WebGL enabled. Install Rust's native prerequisites from the main README if also building the desktop app.
+Prerequisites: Rust 1.95 or newer with Cargo/rustup, PowerShell 7 (`pwsh`), Node.js 24 or newer, and a desktop browser with JavaScript, WebAssembly and WebGL enabled. Install Rust's native prerequisites from the main README if also building the desktop app.
 
 From the repository root, run once:
 
@@ -18,6 +18,7 @@ The CLI version must match the pinned `wasm-bindgen` crate. The script checks th
 Build and serve:
 
 ```powershell
+npm ci --ignore-scripts
 pwsh -File scripts/build-web.ps1
 node scripts/serve-web.mjs
 ```
@@ -60,3 +61,9 @@ Shared debug/release Rust tests, native release build, formatting, and strict na
 ## Browser persistence validation (#55)
 
 The storage adapter has reload/restore/Clear, bounded retention, failed reads, quota failures/retry, corrupt/future/oversized data preservation and multiple-tab policy tests. See the implementation PR for actual browser reload checks and remaining limits. Earlier session-only behavior in the initial validation record describes the original #9 build.
+
+## Shared canvas shell
+
+The page uses web-shared's full-height canvas layout, common footer and status/module bootstrap, bundled from an exact Git revision with a committed integrity lock. Run npm ci --ignore-scripts before browser builds. Rust retains wasm-bindgen initialization, egui input/controls and math-playground.history.v1 storage. No iframe or Go runtime is introduced. The web-only Rust adapter calls appReady only after WebRunner.start finishes, and appError on startup failure; merely resolving the JavaScript initializer never marks the renderer ready. Shared status handling prevents a late callback from erasing a failure.
+
+The asset hash now includes the app bootstrap/CSS, shared modules/styles and generated Rust JS/Wasm together. Frontend-only changes get fresh immutable URLs. prepare-web tests cover that behavior and reject overlarge assets before replacing a valid output. verify-web checks the generated artifact and all paired assets; Pages lifecycle guards and the native app remain unchanged.

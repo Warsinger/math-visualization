@@ -41,6 +41,8 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Install Wasm toolchain
         run: |
           rustup toolchain install stable --profile minimal --component clippy --target wasm32-unknown-unknown
@@ -65,7 +67,7 @@ jobs:
       - name: Verify JS/Wasm pairing and hosting files
         run: node scripts/verify-web.mjs
       - name: Test deployment lifecycle policies
-        run: node --test scripts/pages*.test.mjs
+        run: node --test scripts/*.test.mjs
       - uses: actions/upload-artifact@v6
         with:
           name: browser-app

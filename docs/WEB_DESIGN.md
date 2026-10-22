@@ -32,3 +32,5 @@ The footer stays in normal document flow outside the canvas/iframe. It may wrap 
 ```
 
 Verify all three destinations, keyboard focus, desktop/narrow wrapping and packaged output. The native app and inner runtime document do not need a website navigation footer.
+
+The full-page canvas now uses web-shared/canvas.css and the common footer stylesheet, bundled locally at an exact locked revision. The canvas still uses flex:1/min-height:0 while the footer stays flex:none, preserving plotting space and narrow layouts. App-specific footer links and Rust/egui UI stay here.

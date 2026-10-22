@@ -1,3 +1,6 @@
 /target/
 /dist/
 # Keep Cargo.lock once generated: this is an application.
+
+/node_modules/
+/build/
