@@ -8,11 +8,33 @@ export function releaseIdentity(version, ref) {
   if(tagged && ref!=='refs/tags/v'+version) throw Error('Tag must exactly match v'+version+' from Cargo.toml');
   return {version,tagged,prerelease:!!match[4]};
 }
+export function compareVersions(left, right) {
+  releaseIdentity(left,''); releaseIdentity(right,'');
+  const parse=v=>{const split=v.indexOf('-');return {core:(split<0?v:v.slice(0,split)).split('.').map(Number),pre:split<0?[]:v.slice(split+1).split('.')};};
+  const a=parse(left),b=parse(right);
+  for(let i=0;i<3;i++)if(a.core[i]!==b.core[i])return a.core[i]<b.core[i]?-1:1;
+  if(!a.pre.length || !b.pre.length)return a.pre.length===b.pre.length?0:a.pre.length?-1:1;
+  for(let i=0;i<Math.max(a.pre.length,b.pre.length);i++) {
+    if(i>=a.pre.length)return -1;if(i>=b.pre.length)return 1;
+    const x=a.pre[i],y=b.pre[i];if(x===y)continue;
+    const xn=/^\d+$/.test(x),yn=/^\d+$/.test(y);
+    if(xn&&yn)return BigInt(x)<BigInt(y)?-1:1;
+    if(xn!==yn)return xn?-1:1;
+    return x<y?-1:1;
+  }
+  return 0;
+}
 export function verifyForwardVersion(base, next) {
-  releaseIdentity(base,''); releaseIdentity(next,'');
-  const parts=v=>v.split('-')[0].split('.').map(Number);
-  const [a,b,c]=parts(base),[x,y,z]=parts(next);
-  if(x<a || (x===a && (y<b || (y===b && z<=c)))) throw Error('Issue PR must advance the version beyond main; reconcile the version before merging.');
+  if(compareVersions(next,base)<=0)throw Error('Issue PR must advance the version beyond main; reconcile the version before merging.');
+}
+export function documentationOnly(paths) {
+  return paths.length>0 && paths.every(path=>
+    !path.split('/').some(part=>!part || part==='.' || part==='..') && (['README.md','TESTING.md','SPEC.md'].includes(path) ||
+    /^docs\/.+\.(?:md|rst|txt|png|jpe?g|gif|svg|webp|pdf)$/.test(path)));
+}
+export function verifyPullRequestVersion(base, next, paths) {
+  if(compareVersions(next,base)===0 && documentationOnly(paths))return;
+  verifyForwardVersion(base,next);
 }
 export async function ensureUnpublished(repo,tag,token,request=fetch) {
   const response=await request('https://api.github.com/repos/'+repo+'/releases/tags/'+encodeURIComponent(tag),{headers:{Authorization:'Bearer '+token,Accept:'application/vnd.github+json'}});
@@ -26,7 +48,9 @@ async function main(){
   const info=releaseIdentity(version,process.env.GITHUB_REF||'');
   if(process.env.GITHUB_EVENT_NAME==='pull_request') {
     const base=execFileSync('git',['show','origin/main:Cargo.toml'],{encoding:'utf8'}).match(/^version = "([^"]+)"/m)?.[1];
-    verifyForwardVersion(base,version);
+    // --no-renames includes both old/deleted and new paths; moving code into docs is not an exemption.
+    const paths=execFileSync('git',['diff','--no-renames','--name-only','-z','origin/main...HEAD'],{encoding:'utf8'}).split('\0').filter(Boolean);
+    verifyPullRequestVersion(base,version,paths);
   }
   if(info.tagged){
     execFileSync('git',['diff','--exit-code']);
