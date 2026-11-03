@@ -69,6 +69,7 @@ pub struct CanvasOutput {
 
 #[derive(Default)]
 pub struct Overlays<'a> {
+    pub plots: Option<&'a math_playground::workspace::Workspace>,
     pub tangent_source: Option<&'a str>,
     pub area: Option<&'a math_playground::integral::Area>,
     pub slice: Option<&'a math_playground::slice::Slice>,
@@ -115,6 +116,7 @@ pub fn canvas(
     overlays: Overlays<'_>,
 ) -> CanvasOutput {
     let Overlays {
+        plots,
         tangent_source,
         area,
         slice,
@@ -325,13 +327,32 @@ pub fn canvas(
             Stroke::new(1.0, Color32::from_rgb(210, 150, 60)),
         ));
     }
-    for (i, pair) in geometry.lines.iter().enumerate() {
-        let t = i as f32 / geometry.lines.len().max(1) as f32;
-        let color = Color32::from_rgb((80.0 + 150.0 * t) as u8, (210.0 - 70.0 * t) as u8, 240);
-        painter.line_segment(
-            [project(pair[0]), project(pair[1])],
-            Stroke::new(1.2, color),
-        );
+    if let Some(workspace) = plots {
+        for plot in workspace.plots.iter().filter(|p| p.visible) {
+            let color = Color32::from_rgb(plot.color[0], plot.color[1], plot.color[2]);
+            for pair in &plot.geometry.lines {
+                painter.line_segment(
+                    pair.map(project),
+                    Stroke::new(
+                        if plot.id == workspace.selected {
+                            2.0
+                        } else {
+                            1.2
+                        },
+                        color,
+                    ),
+                );
+            }
+        }
+    } else {
+        for (i, pair) in geometry.lines.iter().enumerate() {
+            let t = i as f32 / geometry.lines.len().max(1) as f32;
+            let color = Color32::from_rgb((80.0 + 150.0 * t) as u8, (210.0 - 70.0 * t) as u8, 240);
+            painter.line_segment(
+                [project(pair[0]), project(pair[1])],
+                Stroke::new(1.2, color),
+            );
+        }
     }
     let selected = if response.dragged() {
         None

@@ -10,3 +10,5 @@ pub mod scene;
 pub mod slice;
 
 pub mod version;
+
+pub mod workspace;

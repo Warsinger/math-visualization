@@ -22,13 +22,25 @@ Type a request in the field at the top, then press Enter or Apply. Try `create a
 
 **Functions:** enter `plot ln(x^2)+sin(y^2)+z^2-5`. This combines natural log, sine (radians), and arithmetic. The pictured sampling settings are X ±6.5, Y/Z ±6.7, and 39 cells per axis. It is an approximate finite-domain surface, not proof of exact or fully resolved geometry. `ln(x^2)` is undefined at x=0; sampling may miss that singularity or other fine features. Feedback saying zero skipped tetrahedra describes sampled corners only, not the validity of every point between them.
 
+## Multiple 2D equations
+
+Enter a 2D equation normally, or choose **New 2D workspace** in the plot controls. **Add equation** creates a blank selected row; enter its equation in the top input and press **Apply**. Applying edits replaces only the selected row. Explicit functions (`y=x^2`) and implicit equations (`x^2+y^2=1`) can coexist. Up to eight rows are supported, each with a distinct color; the selected curve is thicker.
+
+Select a row to edit it or use tangent/integral exploration. Hover inspection targets only the selected visible curve and identifies its equation in the bottom readout. A visibility checkbox hides a curve without deleting it. Hiding the selected row keeps its selection but disables picking and exploration shading. Remove deletes a row; removing the selected row selects the first remaining row, and removing the last leaves a blank row. Failed edits show a row error while retaining its previous valid geometry; unfinished drafts remain available when selecting another row, but are not saved to history.
+
+All rows share axes, camera and applied bounds/sampling. **Apply sampling** rebuilds every row, including hidden rows, using their last applied equations; it does not apply unfinished equation edits. If rebuilding fails, the previous workspace remains. The controls scroll independently beside the desktop canvas; on narrow screens they stay inside the existing collapsible controls.
+
+History records applied equations, colors, visibility, selection and shared sampling as a whole workspace. Add/remove/hide/select actions also record the current applied state so startup restores it. Restore replaces the workspace; for a multi-equation entry, Edit/retry also restores the workspace and selects its saved equation for editing. Existing single-plot entries remain readable. Camera, exploration switches, drafts and errors remain transient. Workspaces containing multiple rows use a new snapshot kind; older app versions cannot read those entries and will preserve the file rather than overwrite it. History retains its existing 200-entry/2 MB limits; a save beyond the byte budget warns and preserves the previous saved data.
+
+A successful 3D request retains the 2D workspace in memory. **Return to 2D workspace** returns to it; applied workspaces are also available in History after restart. Returning to 2D records the current 3D plot in History first. Restoring a different 2D history entry intentionally replaces the retained workspace. Multiple 3D plots and intersection calculations are future enhancements; visually crossing curves do not produce intersection results.
+
 ## Adjust sampling
 
 ![Implicit-surface controls with X, Y, Z half-extents of 3 and 24 cells per axis](images/implicit-surface-sampling-controls.png)
 
 - **X ±, Y ±, Z ±:** independent half-extents of a domain symmetric about zero. For example, X ±6 samples x from -6 to 6. Drag a slider or click its number to type a precise value.
 - **Cells / axis:** grid resolution, currently 8–40 (24 in the screenshot). More cells provide finer sampling but increase work. Increasing domain size with the same cell count makes the grid coarser.
-- **Apply sampling:** rebuilds the current equation using the edited settings. Geometry remains cached until an edit is applied.
+- **Apply sampling:** rebuilds the current surface, or all equations in a 2D workspace, using the edited settings. Geometry remains cached until an edit is applied.
 
 ## Move the camera
 
