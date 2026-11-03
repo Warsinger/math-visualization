@@ -136,4 +136,4 @@ Manual History Restore records its outcome as a new history entry after rebuildi
 
 ## About
 
-Use About beside the application heading to view the bundled icon, description, Created by Matt Lee credit, version and GitHub source link. Build details expand to show the compiled revision, channel, target, profile, dirty state and Rust compiler. The dialog scrolls in small windows. Close, Escape or clicking its backdrop dismisses it. Its contents require no network access; only following the source link opens the browser. About does not change the plot or saved history.
+Use About beside the application heading to view the bundled icon, description, Created by Matt Lee credit, version and GitHub source link. Build details expand to show the compiled revision, channel, target, profile, dirty state and Rust compiler. The dialog scrolls in small windows. Close, Escape or clicking its backdrop dismisses it. Its contents require no network access; only following the source link opens a new browser tab/window, preserving the app. About does not change the plot or saved history.

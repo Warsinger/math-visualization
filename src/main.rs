@@ -401,7 +401,7 @@ impl Playground {
                 ui.label("Explore mathematical curves, helices and implicit surfaces with interactive numerical plots.");
                 ui.label("Created by Matt Lee");
                 ui.label(format!("Version {}",math_playground::version::DISPLAY));
-                ui.hyperlink_to("View source on GitHub", "https://github.com/Warsinger/math-visualization");
+                ui.add(egui::Hyperlink::from_label_and_url("View source on GitHub (new tab)", "https://github.com/Warsinger/math-visualization").open_in_new_tab(true));
                 ui.collapsing("Build details", |ui| {
                     let info: serde_json::Value=serde_json::from_str(math_playground::version::JSON).expect("embedded build identity");
                     for key in ["revision","channel","target","profile","dirty","rust"] {
