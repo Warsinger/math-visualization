@@ -13,8 +13,6 @@ export function verifyForwardVersion(base, next) {
   const parts=v=>v.split('-')[0].split('.').map(Number);
   const [a,b,c]=parts(base),[x,y,z]=parts(next);
   if(x<a || (x===a && (y<b || (y===b && z<=c)))) throw Error('Issue PR must advance the version beyond main; reconcile the version before merging.');
-  if(x===a && y>b && z!==0) throw Error('Feature/minor increments must reset patch to zero.');
-  if(x===a && y===b && z!==c+1) throw Error('Bug fix increments patch by one.');
 }
 export async function ensureUnpublished(repo,tag,token,request=fetch) {
   const response=await request('https://api.github.com/repos/'+repo+'/releases/tags/'+encodeURIComponent(tag),{headers:{Authorization:'Bearer '+token,Accept:'application/vnd.github+json'}});

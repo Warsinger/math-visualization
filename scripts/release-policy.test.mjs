@@ -13,9 +13,10 @@ test('existing releases and failed API access never pass uniqueness gate',async(
  await assert.rejects(ensureUnpublished('repo','v1','token',async()=>({status:403})),/Cannot verify/);
 });
 
-test('issue versions advance and feature versions reset patch, including stacked features',()=>{
+test('issue versions advance, including stacked feature and bug-fix PRs',()=>{
  verifyForwardVersion('0.1.2','0.1.3');
  verifyForwardVersion('0.1.2','0.2.0');
  verifyForwardVersion('0.1.2','0.3.0'); // stacked on the 0.2.0 feature
- for(const [base,next] of [['0.2.0','0.2.0'],['0.2.0','0.1.1'],['0.1.2','0.2.1'],['0.1.2','0.1.4']])assert.throws(()=>verifyForwardVersion(base,next));
+ verifyForwardVersion('0.1.2','0.2.1'); // bug fix stacked on the 0.2.0 feature
+ for(const [base,next] of [['0.2.0','0.2.0'],['0.2.0','0.1.1']])assert.throws(()=>verifyForwardVersion(base,next));
 });
