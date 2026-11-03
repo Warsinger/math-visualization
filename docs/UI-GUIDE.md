@@ -127,3 +127,9 @@ reduce clutter; the origin is labeled at most once. There is no depth occlusion.
 Below 900 logical pixels wide, plot controls and exploration tools are in a collapsible section above the full-width plot. History appears below the plot when enabled. Scroll vertically to reach off-screen controls and readouts; opening history never covers the visualization. Wider windows retain the resizable history dock and controls beside the plot. Short windows also scroll rather than clip controls. Desktop windows can be resized down to 320 × 360 logical pixels.
 
 Drag the plot to pan a 2D curve or rotate a 3D plot. In narrow layouts, use the Zoom slider under Plot controls and exploration; scrolling moves through the workspace without changing zoom. Touch-and-hold near a plotted line to inspect it while the pointer is down.
+
+## Initial plot from history
+
+On desktop startup and browser reload, the newest successful saved history entry becomes the initial plot, with its saved bounds/sampling and matching input mode. Failed requests are skipped; selection follows history order rather than timestamps. Startup restoration does not add an entry or write history. Empty, unavailable or unreadable history keeps the default helix. If rebuilding the saved snapshot fails, the error appears in plot feedback and the default remains available. Browser storage warnings remain visible separately. Camera and exploration controls are not part of history snapshots.
+
+Manual History Restore records its outcome as a new history entry after rebuilding, so a successfully restored older plot becomes the initial plot on the next startup/reload. Automatic startup restoration does not add entries or write history. Failed restores retain the active plot and do not replace the latest successful startup choice.
