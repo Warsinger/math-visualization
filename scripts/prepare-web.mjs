@@ -4,7 +4,7 @@ import {mkdir, readFile, rm, writeFile} from 'node:fs/promises';
 import {dirname, resolve, sep} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 
-export const runtimeNames = ['math_playground.js','math_playground_bg.wasm','app.mjs','styles.css','shared/module-runtime.mjs','shared/status.mjs','shared/canvas.css','shared/footer.css'];
+export const runtimeNames = ['build-info.json','math_playground.js','math_playground_bg.wasm','app.mjs','styles.css','shared/module-runtime.mjs','shared/status.mjs','shared/canvas.css','shared/footer.css'];
 export function runtimeHash(files) {
   const digest=createHash('sha256');
   for(const name of runtimeNames) digest.update(name).update('\0').update(files.get(name));
@@ -14,7 +14,7 @@ export async function prepareWeb(root = fileURLToPath(new URL('../', import.meta
   const output=resolve(root,'dist/web');
   const files=new Map();
   for(const name of runtimeNames) {
-    const source=name.startsWith('shared/') ? resolve(root,'node_modules/@warsinger/web-shared/browser',name.slice(7)) : resolve(root,name.startsWith('math_playground')?'target/web-bindgen':'web',name);
+    const source=name.startsWith('shared/') ? resolve(root,'node_modules/@warsinger/web-shared/browser',name.slice(7)) : resolve(root,(name.startsWith('math_playground') || name==='build-info.json')?'target/web-bindgen':'web',name);
     const data=await readFile(source);
     if(data.length>25*1024*1024) throw new Error(name+' exceeds the Pages 25 MiB asset limit.');
     files.set(name,data);

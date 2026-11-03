@@ -11,6 +11,7 @@ function fixture(t){
  for(const file of ['index.html','app.mjs','styles.css','_headers'])fs.copyFileSync(new URL('../web/'+file,import.meta.url),path.join(root,'web',file));
  fs.cpSync(new URL('../node_modules/@warsinger/web-shared/browser',import.meta.url),path.join(root,'node_modules/@warsinger/web-shared/browser'),{recursive:true});
  for(const file of ['favicon.ico','app-192.png','apple-touch-icon.png'])fs.copyFileSync(new URL('../assets/icon/'+file,import.meta.url),path.join(root,'assets/icon',file));
+ fs.writeFileSync(path.join(root,'target/web-bindgen/build-info.json'),JSON.stringify({version:'0.1.0',display_version:'0.1.0+local.gtest',target:'wasm32-unknown-unknown',profile:'release',revision:'test'}));
  fs.writeFileSync(path.join(root,'target/web-bindgen/math_playground.js'),"export default async function init(){}; const url=new URL('math_playground_bg.wasm', import.meta.url);");
  fs.writeFileSync(path.join(root,'target/web-bindgen/math_playground_bg.wasm'),Buffer.from([0,97,115,109,1,0,0,0]));
  return root;

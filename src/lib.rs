@@ -8,3 +8,5 @@ pub mod history;
 pub mod integral;
 pub mod scene;
 pub mod slice;
+
+pub mod version;

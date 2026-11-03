@@ -67,3 +67,9 @@ pub fn launch() {
         }
     });
 }
+
+/// Identity from the loaded Wasm module, useful when diagnosing hosted builds.
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn build_info() -> String {
+    math_playground::version::JSON.to_owned()
+}
