@@ -743,6 +743,69 @@ mod tests {
         assert!(app.pending.is_none());
     }
     #[test]
+    fn about_source_click_requests_repository_in_a_new_tab() {
+        let ctx = egui::Context::default();
+        let mut app = Playground {
+            about_open: true,
+            ..Default::default()
+        };
+        let mut position = egui::Pos2::ZERO;
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1150.0, 760.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    app.about_ui(ui.ctx());
+                },
+            );
+            output.textures_delta.clear();
+            position = output
+                .shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    egui::Shape::Text(t) if t.galley.job.text.contains("View source on GitHub") => {
+                        Some(t.pos + egui::vec2(30.0, 5.0))
+                    }
+                    _ => None,
+                })
+                .unwrap_or(position);
+        }
+        assert_ne!(position, egui::Pos2::ZERO, "source link must render");
+        for pressed in [true, false] {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1150.0, 760.0),
+                    )),
+                    events: vec![
+                        egui::Event::PointerMoved(position),
+                        egui::Event::PointerButton {
+                            pos: position,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::default(),
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ui| {
+                    app.about_ui(ui.ctx());
+                },
+            );
+            output.textures_delta.clear();
+            if !pressed {
+                assert!(output.platform_output.commands.iter().any(|command|matches!(command,egui::OutputCommand::OpenUrl(url) if url.url=="https://github.com/Warsinger/math-visualization" && url.new_tab)));
+            }
+        }
+    }
+
+    #[test]
     fn about_fits_minimum_window_shows_identity_and_dismisses_with_escape() {
         for size in [egui::vec2(320.0, 360.0), egui::vec2(1150.0, 760.0)] {
             let ctx = egui::Context::default();
