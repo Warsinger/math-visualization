@@ -16,6 +16,7 @@ use math_playground::{
     geometry::Sampling,
     history::{Outcome, Snapshot, Store, truncate},
     scene::{PlotMode, Scene},
+    workspace::PlotKind,
 };
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use view::Camera;
@@ -207,8 +208,25 @@ impl Playground {
                             );
                             self.curve_sampling = c.sampling;
                         }
+                        if self.scene.spatial_active() {
+                            let w = self.scene.spatial_workspace.as_ref().unwrap();
+                            self.request = w.selected().draft.clone();
+                            self.sampling = w.spatial.unwrap();
+                            self.curve_sampling.samples = w.sampling.samples;
+                        }
                         self.error = false;
-                        self.feedback = if self.scene.curve.is_some() {
+                        self.feedback = if self.scene.spatial_active() {
+                            let w = self.scene.spatial_workspace.as_ref().unwrap();
+                            format!(
+                                "3D workspace: {} objects; {} visible lines. Approximate wireframe; projected crossings are not intersection results.",
+                                w.plots.len(),
+                                w.plots
+                                    .iter()
+                                    .filter(|p| p.visible)
+                                    .map(|p| p.geometry.lines.len())
+                                    .sum::<usize>()
+                            )
+                        } else if self.scene.curve.is_some() {
                             format!(
                                 "2D workspace: {} equations; {} visible segments; {} sampling regions skipped. Empty output does not prove no real values exist.",
                                 self.scene.workspace.as_ref().map_or(1, |w| w.plots.len()),
@@ -251,6 +269,14 @@ impl Playground {
                             && let Some(workspace) = &mut self.scene.workspace
                         {
                             workspace.selected_mut().error = Some(error.clone());
+                        }
+                        if self.scene.spatial_active() {
+                            self.scene
+                                .spatial_workspace
+                                .as_mut()
+                                .unwrap()
+                                .selected_mut()
+                                .error = Some(error.clone());
                         }
                         self.error = true;
                         self.feedback = error;
@@ -385,7 +411,11 @@ impl Playground {
                                         } else {
                                             PlotMode::ThreeD
                                         };
-                                        if matches!(snapshot, Snapshot::Workspace { .. }) {
+                                        if matches!(
+                                            snapshot,
+                                            Snapshot::Workspace { .. }
+                                                | Snapshot::SpatialWorkspace { .. }
+                                        ) {
                                             restore = Some(snapshot.clone());
                                         } else {
                                             retry = Some(snapshot.request());
@@ -416,9 +446,168 @@ impl Playground {
 }
 
 impl Playground {
+    fn sync_spatial_editor(&mut self) {
+        let w = self.scene.spatial_workspace.as_ref().expect("3D workspace");
+        self.request = w.selected().draft.clone();
+        self.sampling = w.spatial.unwrap();
+        self.curve_sampling.samples = w.sampling.samples;
+        self.plot_mode = PlotMode::ThreeD;
+        self.error = w.selected().error.is_some();
+        self.feedback =
+            w.selected().error.clone().unwrap_or_else(|| {
+                "3D workspace updated. Apply edits to the selected object.".into()
+            });
+    }
+    fn spatial_objects_ui(&mut self, ui: &mut egui::Ui) {
+        let mut changed = false;
+        let mut selected = None;
+        let mut remove = None;
+        if let Some(w) = &mut self.scene.spatial_workspace {
+            ui.heading("Objects · 3D");
+            ui.small("Select an object to edit or inspect. XY curves lie at z=0.");
+            for plot in &mut w.plots {
+                ui.push_id(("spatial", plot.id), |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        changed |= ui
+                            .checkbox(&mut plot.visible, "")
+                            .on_hover_text("Show object")
+                            .changed();
+                        let (dot, _) =
+                            ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                        ui.painter().circle_filled(
+                            dot.center(),
+                            4.0,
+                            egui::Color32::from_rgb(plot.color[0], plot.color[1], plot.color[2]),
+                        );
+                        let label = match plot.object {
+                            PlotKind::Curve => format!(
+                                "XY: {}",
+                                if plot.source.is_empty() {
+                                    "New curve"
+                                } else {
+                                    &plot.source
+                                }
+                            ),
+                            PlotKind::Surface => format!(
+                                "Surface: {}",
+                                if plot.source.is_empty() {
+                                    "New equation"
+                                } else {
+                                    &plot.source
+                                }
+                            ),
+                            PlotKind::Helix { parameters: h } => {
+                                format!("Helix r={} h={} turns={}", h.radius, h.height, h.turns)
+                            }
+                        };
+                        if ui.selectable_label(plot.id == w.selected, label).clicked()
+                            && plot.id != w.selected
+                        {
+                            selected = Some(plot.id);
+                        }
+                        if ui.small_button("Remove").clicked() {
+                            remove = Some(plot.id);
+                        }
+                    });
+                    if let Some(error) = &plot.error {
+                        ui.colored_label(egui::Color32::LIGHT_RED, error);
+                    }
+                    if !plot.draft.is_empty()
+                        && plot
+                            .draft
+                            .trim()
+                            .strip_prefix("plot ")
+                            .unwrap_or(plot.draft.trim())
+                            != plot.source
+                    {
+                        ui.small("Unapplied edit; previous object retained.");
+                    }
+                });
+            }
+            if let Some(id) = selected {
+                w.selected = id;
+            }
+            if let Some(id) = remove {
+                w.remove(id);
+                changed = true;
+            }
+        }
+        let mut add = None;
+        ui.add_enabled_ui(
+            self.scene
+                .spatial_workspace
+                .as_ref()
+                .is_none_or(|w| w.plots.len() < math_playground::workspace::MAX_PLOTS),
+            |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Add surface").clicked() {
+                        add = Some(PlotKind::Surface);
+                    }
+                    if ui.button("Add helix").clicked() {
+                        add = Some(PlotKind::Helix {
+                            parameters: Default::default(),
+                        });
+                    }
+                    if ui.button("Add XY curve").clicked() {
+                        add = Some(PlotKind::Curve);
+                    }
+                });
+            },
+        );
+        if let Some(object) = add {
+            let result = (|| {
+                self.scene.enable_spatial_workspace()?;
+                let mut w = self.scene.spatial_workspace.as_ref().unwrap().clone();
+                w.add()?;
+                w.selected_mut().object = object;
+                if matches!(object, PlotKind::Helix { .. }) {
+                    let request = w.selected_request();
+                    w.apply(&request)?;
+                }
+                self.scene.spatial_workspace = Some(w);
+                Ok::<_, String>(())
+            })();
+            match result {
+                Ok(()) => changed = true,
+                Err(error) => {
+                    self.error = true;
+                    self.feedback = error;
+                }
+            }
+        }
+        if changed || selected.is_some() {
+            self.scene.sync_spatial_workspace();
+            self.sync_spatial_editor();
+            if changed {
+                self.record_workspace();
+            }
+        }
+        if self.scene.spatial_active() {
+            ui.small("Up to 8 objects / 300,000 total lines, including hidden objects. Wireframe overlaps are not intersection results.");
+            ui.collapsing("Shared 3D bounds and sampling", |ui| {
+                for (label, extent) in ["X ±", "Y ±", "Z ±"].into_iter().zip(&mut self.sampling.extent) {
+                    ui.add(egui::Slider::new(extent,0.1..=10.0).text(label));
+                }
+                ui.add(egui::Slider::new(&mut self.sampling.resolution,8..=40).text("Surface cells / axis"));
+                ui.add(egui::Slider::new(&mut self.curve_sampling.samples,64..=4096).text("XY samples"));
+                ui.small("Bounds sample surfaces and XY curves. Helices retain their own radius/height. Apply rebuilds all objects using applied equations.");
+                if ui.button("Apply 3D sampling").clicked() {
+                    let settings = self.sampling;
+                    let samples = self.curve_sampling.samples;
+                    self.pending_history_request = Some("Apply shared 3D sampling".into());
+                    self.start(move |scene| {
+                        scene.spatial_workspace.as_mut().unwrap().rebuild_spatial(settings,samples)?;
+                        scene.sync_spatial_workspace(); Ok(())
+                    });
+                }
+            });
+            ui.separator();
+        }
+    }
     fn equations_ui(&mut self, ui: &mut egui::Ui) {
         let active = self.scene.curve.is_some();
         if !active {
+            self.spatial_objects_ui(ui);
             let label = if self.scene.workspace.is_some() {
                 "Return to 2D workspace"
             } else {
@@ -431,6 +620,7 @@ impl Playground {
                     .record(snapshot.request(), Outcome::Success { snapshot });
                 if self.scene.workspace.is_none() {
                     let mut workspace = math_playground::workspace::Workspace {
+                        spatial: None,
                         plots: Vec::new(),
                         selected: 0,
                         sampling: self.curve_sampling,
@@ -439,6 +629,7 @@ impl Playground {
                     self.scene.workspace = Some(workspace);
                 }
                 self.scene.sync_workspace();
+                self.curve_sampling = self.scene.workspace.as_ref().unwrap().sampling;
                 self.plot_mode = PlotMode::TwoD;
                 self.request = self
                     .scene
@@ -451,6 +642,27 @@ impl Playground {
                 self.feedback = "2D workspace: select or add an equation, then Apply.".into();
                 self.error = false;
                 self.record_workspace();
+            }
+            return;
+        }
+        if ui
+            .button(if self.scene.spatial_workspace.is_some() {
+                "Return to 3D workspace"
+            } else {
+                "New 3D workspace"
+            })
+            .clicked()
+        {
+            self.record_workspace();
+            match self.scene.enable_spatial_workspace() {
+                Ok(()) => {
+                    self.sync_spatial_editor();
+                    self.record_workspace();
+                }
+                Err(error) => {
+                    self.error = true;
+                    self.feedback = error;
+                }
             }
             return;
         }
@@ -623,18 +835,20 @@ impl Playground {
                     ui.selectable_value(&mut self.plot_mode,PlotMode::TwoD,"2D · XY");
                     ui.selectable_value(&mut self.plot_mode,PlotMode::ThreeD,"3D · implicit");
                 });
-                ui.small("Auto: equations with z use 3D; otherwise 2D. Bare x^2 means y=x^2. Overrides apply on the next request. Helices are 3D.");
+                ui.small(if self.scene.spatial_active() { "In a 3D workspace Auto keeps the selected object type. Use Add XY curve to place a curve at z=0; surfaces remain implicit. Choose 2D or return to its workspace for planar plotting." } else { "Auto: equations with z use 3D; otherwise 2D. Bare x^2 means y=x^2. Overrides apply on the next request. Helices are 3D." });
             });
             ui.separator();
             if self.scene.curve.is_some() { ui.small("Edit the selected equation below. Apply updates only that row; Add equation creates another."); }
+            else if self.scene.spatial_active() { ui.small("Edit the selected 3D object below. Apply updates only that row; Add surface/helix/XY curve creates another."); }
             ui.add_enabled_ui(self.pending.is_none(), |ui| {
                 ui.horizontal(|ui| {
                     let response = ui.add(egui::TextEdit::singleline(&mut self.request)
                         .font(egui::FontId::monospace(14.0))
                         .desired_width((ui.available_width() - 85.0).max(100.0))
                         .hint_text(if self.scene.curve.is_some() { "Enter a 2D equation, e.g. y=x^2" } else { "plot x^2 - y^2 - z^2 = 0" }));
-                    if response.changed() && self.scene.curve.is_some() && let Some(workspace) = &mut self.scene.workspace {
-                        workspace.selected_mut().draft = self.request.clone();
+                    if response.changed() {
+                        if self.scene.curve.is_some() && self.plot_mode != PlotMode::ThreeD && let Some(workspace) = &mut self.scene.workspace { workspace.selected_mut().draft = self.request.clone(); }
+                        else if self.scene.spatial_active() && self.plot_mode != PlotMode::TwoD { self.scene.spatial_workspace.as_mut().unwrap().selected_mut().draft = self.request.clone(); }
                     }
                     let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if ui.button("Apply").clicked() || enter {
@@ -675,7 +889,10 @@ impl Playground {
                     ui.set_width(if compact { ui.available_width() } else { 255.0 });
                     ui.add_enabled_ui(self.pending.is_none(), |ui| {
                         self.equations_ui(ui);
-                        if let Some(curve)=&self.scene.curve {
+                        if self.scene.spatial_active() && self.scene.spatial_workspace.as_ref().unwrap().selected().object == PlotKind::Curve {
+                            ui.heading("Selected · XY curve in 3D");
+                            ui.label("This curve lies on the XY plane at z=0. Edit its equation in the top input. Tangent/area exploration is available in the separate 2D workspace.");
+                        } else if let Some(curve)=&self.scene.curve {
                             let source=curve.source.clone();
                             let applied_extent=f64::from(curve.sampling.extent[0]);
                             ui.heading("Selected · 2D curve");
@@ -722,6 +939,7 @@ impl Playground {
                             let source = surface.source.clone();
                             let applied_sampling = surface.sampling;
                             ui.heading("Selected · Implicit surface");
+                            if !self.scene.spatial_active() {
                             for (axis, extent) in ["X", "Y", "Z"].into_iter().zip(&mut self.sampling.extent) {
                                 ui.add(egui::Slider::new(extent, 0.1..=10.0).text(format!("{axis} ±")));
                             }
@@ -731,6 +949,7 @@ impl Playground {
                                 let sampling = self.sampling;
                                 self.pending_history_request=Some(format!("plot {source}"));
                                 self.start(move |scene| scene.plot(&source, sampling));
+                            }
                             }
                             ui.checkbox(&mut self.slice_enabled, "Explore cross-section");
                             if self.slice_enabled {
@@ -758,7 +977,7 @@ impl Playground {
                             ui.label("Click a number to type a precise value.");
                             if edited != self.scene.helix {
                                 match self.scene.replace(edited) {
-                                    Ok(()) => { self.error = false; self.feedback = "Helix updated from controls.".into(); }
+                                    Ok(()) => { self.error = false; self.feedback = "Helix updated from controls.".into(); if self.scene.spatial_active() { self.request = self.scene.spatial_workspace.as_ref().unwrap().selected_request(); self.record_workspace(); } }
                                     Err(error) => {
                                         #[cfg(not(target_arch = "wasm32"))]
                                         tracing::warn!(target:"math_playground", event="helix_controls_rejected", error=%truncate(&error,1024), radius=edited.radius,height=edited.height,turns=edited.turns);
@@ -782,21 +1001,23 @@ impl Playground {
                 if compact {
                     egui::CollapsingHeader::new("Plot controls and exploration").show(ui, controls);
                 } else { ui.vertical(|ui| { egui::ScrollArea::vertical().id_salt("equation_controls_scroll").max_height(canvas_height).show(ui, controls); }); }
-                inspection_equation = if let Some(curve) = &self.scene.curve {
+                inspection_equation = if self.scene.spatial_active() && self.scene.spatial_workspace.as_ref().unwrap().selected().object == PlotKind::Curve {
+                    math_playground::expression::Equation::planar(&self.scene.spatial_workspace.as_ref().unwrap().selected().source).ok()
+                } else if let Some(curve) = &self.scene.curve {
                     math_playground::expression::Equation::planar(&curve.source).ok()
                 } else if let Some(surface) = &self.scene.surface {
                     math_playground::expression::Equation::parse(&surface.source).ok()
                 } else { None };
-                let selected_visible = self.scene.workspace.as_ref().is_none_or(|w|w.selected().visible);
+                let selected_visible = if self.scene.spatial_active() { self.scene.spatial_workspace.as_ref().unwrap().selected().visible } else { self.scene.workspace.as_ref().is_none_or(|w|w.selected().visible) };
                 let tangent_source = if self.tangent_enabled && selected_visible { self.scene.curve.as_ref().map(|curve|curve.source.as_str()) } else { None };
                 let area=if self.area_enabled && selected_visible {
                     self.scene.curve.as_ref().and_then(|curve|self.area_cache.get(&curve.source,self.area_bounds[0],self.area_bounds[1]).as_ref().ok())
                 } else {None};
-                let slice = if self.slice_enabled {
+                let slice = if self.slice_enabled && selected_visible {
                     self.scene.surface.as_ref().and_then(|surface| self.slice_cache.get(&surface.source, surface.sampling, self.slice_axis, self.slice_position).as_ref().ok())
                 } else { None };
-                let axis_extent = Some(self.scene.surface.as_ref().map_or([self.scene.helix.radius,self.scene.helix.radius,self.scene.helix.height/2.0], |s|s.sampling.extent));
-                let output=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling), view::Overlays {plots: self.scene.curve.as_ref().and(self.scene.workspace.as_ref()),tangent_source,area,slice,axis_markers:self.axis_markers,axis_extent});
+                let axis_extent = if self.scene.spatial_active() { Some(self.scene.spatial_workspace.as_ref().unwrap().spatial.unwrap().extent) } else { Some(self.scene.surface.as_ref().map_or([self.scene.helix.radius,self.scene.helix.radius,self.scene.helix.height/2.0], |s|s.sampling.extent)) };
+                let output=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling), view::Overlays {plots: if self.scene.spatial_active() { self.scene.spatial_workspace.as_ref() } else { self.scene.curve.as_ref().and(self.scene.workspace.as_ref()) },tangent_source,area,slice,axis_markers:self.axis_markers,axis_extent});
                 canvas_rect=output.rect;
                 inspected_point=output.selected;
                 tangent=output.tangent;
@@ -805,6 +1026,7 @@ impl Playground {
                 if let Some(w) = self.scene.workspace.as_ref().filter(|_|self.scene.curve.is_some()) {
                     ui.label(format!("Selected equation: {}{}", w.selected().source, if w.selected().visible { "" } else { " (hidden)" }));
                 }
+                if self.scene.spatial_active() { let w = self.scene.spatial_workspace.as_ref().unwrap(); ui.label(format!("Selected 3D object: {}{}", w.selected_request(), if w.selected().visible { "" } else { " (hidden)" })); }
                 view::inspection_readout(ui, inspected_point, inspection_equation.as_ref());
                 if self.tangent_enabled && self.scene.curve.is_some() {
                     match &tangent {
@@ -815,7 +1037,9 @@ impl Playground {
                 }
             });
             ui.separator();
-            if let Some(curve)=&self.scene.curve {
+            if self.scene.spatial_active() && self.scene.spatial_workspace.as_ref().unwrap().selected().object == PlotKind::Curve {
+                ui.label("XY curve in 3D: z=0. Projected overlaps do not establish geometric intersections.");
+            } else if let Some(curve)=&self.scene.curve {
                 ui.label(format!("2D Cartesian: {}",curve.source));
                 ui.label("Uniform numerical samples; undefined/sharp intervals may be skipped, and discontinuities can still mislead.");
             } else if let Some(surface) = &self.scene.surface {
@@ -933,6 +1157,200 @@ mod tests {
             std::thread::yield_now();
         }
         assert!(app.pending.is_none());
+    }
+    #[test]
+    fn returning_to_2d_reloads_its_complete_sampling_controls() {
+        let applied = CurveSampling {
+            extent: [2.0, 4.0],
+            samples: 256,
+        };
+        let mut app = Playground::default();
+        app.scene.plot_curve("x^2", applied).unwrap();
+        app.curve_sampling = CurveSampling {
+            extent: [7.0, 8.0],
+            ..applied
+        };
+        app.scene.enable_spatial_workspace().unwrap();
+        app.scene
+            .spatial_workspace
+            .as_mut()
+            .unwrap()
+            .rebuild_spatial(Sampling::default(), 4096)
+            .unwrap();
+        app.scene.sync_spatial_workspace();
+        app.sync_spatial_editor();
+        assert_eq!(app.curve_sampling.samples, 4096);
+        let ctx = egui::Context::default();
+        let mut point = egui::Pos2::ZERO;
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(Default::default(), |ui| app.equations_ui(ui));
+            output.textures_delta.clear();
+            point = output
+                .shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    egui::Shape::Text(t) if t.galley.job.text == "Return to 2D workspace" => {
+                        Some(t.pos + egui::vec2(8.0, 6.0))
+                    }
+                    _ => None,
+                })
+                .expect("return button");
+        }
+        for pressed in [true, false] {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events: vec![
+                        egui::Event::PointerMoved(point),
+                        egui::Event::PointerButton {
+                            pos: point,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ui| app.equations_ui(ui),
+            );
+            output.textures_delta.clear();
+        }
+        assert!(app.scene.curve.is_some());
+        assert_eq!(app.curve_sampling, applied);
+        assert_eq!(app.scene.workspace.as_ref().unwrap().sampling, applied);
+        assert_eq!(
+            app.scene
+                .spatial_workspace
+                .as_ref()
+                .unwrap()
+                .sampling
+                .samples,
+            4096
+        );
+        // Editing bounds after returning must retain the 2D resolution.
+        let settings = CurveSampling {
+            extent: [3.0, 5.0],
+            ..app.curve_sampling
+        };
+        app.start(move |scene| {
+            scene.workspace.as_mut().unwrap().rebuild(settings)?;
+            scene.sync_workspace();
+            Ok(())
+        });
+        finish_startup(&mut app);
+        assert_eq!(app.scene.workspace.as_ref().unwrap().sampling.samples, 256);
+    }
+    #[test]
+    fn spatial_startup_selection_and_failed_edit_preserve_workspace() {
+        let mut scene = Scene::default();
+        scene
+            .plot(
+                "z=0",
+                Sampling {
+                    resolution: 8,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        scene.enable_spatial_workspace().unwrap();
+        let w = scene.spatial_workspace.as_mut().unwrap();
+        let surface = w.selected;
+        w.add().unwrap();
+        w.selected_mut().object = PlotKind::Curve;
+        w.apply("x^2+y^2=1").unwrap();
+        scene.sync_spatial_workspace();
+        let snapshot = Snapshot::capture(&scene);
+        let mut history = Store::session();
+        history.record(
+            snapshot.request(),
+            Outcome::Success {
+                snapshot: snapshot.clone(),
+            },
+        );
+        let mut app = Playground::with_history(history);
+        finish_startup(&mut app);
+        assert_eq!(app.plot_mode, PlotMode::ThreeD);
+        assert_eq!(Snapshot::capture(&app.scene), snapshot);
+        assert_eq!(app.request, "x^2+y^2=1");
+        let ctx = egui::Context::default();
+        let mut point = egui::Pos2::ZERO;
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(Default::default(), |ui| app.spatial_objects_ui(ui));
+            output.textures_delta.clear();
+            point = output
+                .shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    egui::Shape::Text(t) if t.galley.job.text == "Surface: z=0" => {
+                        Some(t.pos + egui::vec2(6.0, 6.0))
+                    }
+                    _ => None,
+                })
+                .expect("surface row");
+        }
+        for _ in 0..2 {
+            for pressed in [true, false] {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        events: vec![
+                            egui::Event::PointerMoved(point),
+                            egui::Event::PointerButton {
+                                pos: point,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: Default::default(),
+                            },
+                        ],
+                        ..Default::default()
+                    },
+                    |ui| app.spatial_objects_ui(ui),
+                );
+                output.textures_delta.clear();
+            }
+            assert_eq!(
+                app.scene.spatial_workspace.as_ref().unwrap().selected,
+                surface
+            );
+            assert_eq!(app.request, "z=0");
+            assert_eq!(app.history.history.entries.len(), 1);
+        }
+        app.request = "bad(".into();
+        app.scene
+            .spatial_workspace
+            .as_mut()
+            .unwrap()
+            .selected_mut()
+            .draft = app.request.clone();
+        app.pending_history_request = Some(app.request.clone());
+        app.start(|scene| scene.request_in_mode("bad(", PlotMode::Auto));
+        finish_startup(&mut app);
+        assert!(app.error);
+        let w = app.scene.spatial_workspace.as_ref().unwrap();
+        assert_eq!(w.plots.len(), 2);
+        assert_eq!(w.selected().source, "z=0");
+        assert!(w.selected().error.is_some());
+        assert!(!w.selected().geometry.lines.is_empty());
+        app.slice_enabled = true;
+        for size in [egui::vec2(320.0, 600.0), egui::vec2(1150.0, 760.0)] {
+            let ctx = egui::Context::default();
+            for _ in 0..3 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        app.draw(ui);
+                    },
+                );
+                output.textures_delta.clear();
+                for s in output.shapes {
+                    let r = s.shape.visual_bounding_rect();
+                    if r.is_positive() {
+                        assert!(r.min.is_finite() && r.max.is_finite());
+                    }
+                }
+            }
+        }
     }
     #[test]
     fn clicking_equation_rows_selects_without_adding_history() {

@@ -419,6 +419,95 @@ pub fn inspection_readout(ui: &mut egui::Ui, point: Option<[f32; 3]>, equation: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn spatial_layers_render_together_but_only_selected_visible_object_is_picked() {
+        use math_playground::{
+            geometry::Sampling,
+            workspace::{PlotKind, Workspace},
+        };
+        let mut w = Workspace::spatial_single(
+            PlotKind::Surface,
+            "z=0",
+            Sampling {
+                resolution: 8,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        w.selected_mut().geometry = Geometry {
+            lines: vec![[[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]],
+            bound: 2.0,
+            ..Default::default()
+        };
+        let selected = w.selected;
+        w.add().unwrap();
+        w.selected_mut().geometry = Geometry {
+            lines: vec![[[-1.0, 10.0, 0.0], [1.0, 10.0, 0.0]]],
+            bound: 2.0,
+            ..Default::default()
+        };
+        w.selected = selected;
+        for hidden in [false, true] {
+            w.selected_mut().visible = !hidden;
+            let geometry = if hidden {
+                Geometry {
+                    bound: 2.0,
+                    ..Default::default()
+                }
+            } else {
+                w.selected().geometry.clone()
+            };
+            let ctx = egui::Context::default();
+            let mut camera = Camera {
+                yaw: 0.0,
+                tilt: 0.0,
+                ..Default::default()
+            };
+            let mut rect = egui::Rect::NOTHING;
+            for frame in 0..2 {
+                let mut picked = None;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            Pos2::ZERO,
+                            egui::vec2(500.0, 300.0),
+                        )),
+                        events: if frame == 0 {
+                            vec![]
+                        } else {
+                            vec![egui::Event::PointerMoved(rect.center())]
+                        },
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let result = canvas(
+                            ui,
+                            &geometry,
+                            &mut camera,
+                            200.0,
+                            None,
+                            Overlays {
+                                plots: Some(&w),
+                                ..Default::default()
+                            },
+                        );
+                        rect = result.rect;
+                        picked = result.selected;
+                    },
+                );
+                output.textures_delta.clear();
+                let other = w.plots[1].color;
+                assert!(output.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::LineSegment {stroke,..} if stroke.color==Color32::from_rgb(other[0],other[1],other[2]))));
+                if frame == 1 {
+                    if hidden {
+                        assert!(picked.is_none());
+                    } else {
+                        assert_eq!(picked.unwrap()[1], 0.0);
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn tick_labels_are_distinct_accurate_and_never_negative_zero() {

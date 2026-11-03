@@ -70,6 +70,7 @@ impl Helix {
 /// Both UI controls and commands replace this same validated scene state.
 #[derive(Clone)]
 pub struct Scene {
+    pub spatial_workspace: Option<crate::workspace::Workspace>,
     pub workspace: Option<crate::workspace::Workspace>,
     pub helix: Helix,
     pub surface: Option<Surface>,
@@ -92,6 +93,7 @@ pub struct Surface {
 impl Default for Scene {
     fn default() -> Self {
         let mut scene = Self {
+            spatial_workspace: None,
             workspace: None,
             helix: Helix::default(),
             surface: None,
@@ -106,6 +108,18 @@ impl Default for Scene {
 impl Scene {
     pub fn replace(&mut self, helix: Helix) -> Result<(), String> {
         let helix = helix.validate()?;
+        if let Some(workspace) = &mut self.spatial_workspace {
+            workspace.change_object(
+                crate::workspace::PlotKind::Helix { parameters: helix },
+                &format!(
+                    "create a helix with radius {} and height {} and turns {}",
+                    helix.radius, helix.height, helix.turns
+                ),
+            )?;
+            self.reset_dimension_draft();
+            self.sync_spatial_workspace();
+            return Ok(());
+        }
         let points = helix.points();
         self.reset_dimension_draft();
         self.geometry = Geometry {
@@ -120,6 +134,21 @@ impl Scene {
     }
 
     pub fn plot(&mut self, source: &str, sampling: Sampling) -> Result<(), String> {
+        if let Some(mut workspace) = self.spatial_workspace.clone() {
+            if workspace.spatial != Some(sampling) {
+                workspace.rebuild_spatial(sampling, workspace.sampling.samples)?;
+            }
+            let object = if workspace.selected().object == crate::workspace::PlotKind::Curve {
+                crate::workspace::PlotKind::Curve
+            } else {
+                crate::workspace::PlotKind::Surface
+            };
+            workspace.change_object(object, source)?;
+            self.spatial_workspace = Some(workspace);
+            self.reset_dimension_draft();
+            self.sync_spatial_workspace();
+            return Ok(());
+        }
         let equation = Equation::parse(source)?;
         let geometry = geometry::mesh(&equation, sampling)?;
         self.reset_dimension_draft();
@@ -132,6 +161,98 @@ impl Scene {
         Ok(())
     }
 
+    pub fn enable_spatial_workspace(&mut self) -> Result<(), String> {
+        if self.spatial_workspace.is_none() {
+            // Reuse cached geometry when converting a single 3D plot; only metadata changes.
+            let (object, source, sampling, geometry) = if let Some(surface) = &self.surface {
+                (
+                    crate::workspace::PlotKind::Surface,
+                    surface.source.clone(),
+                    surface.sampling,
+                    self.geometry.clone(),
+                )
+            } else {
+                let h = self.helix;
+                let source = format!(
+                    "create a helix with radius {} and height {} and turns {}",
+                    h.radius, h.height, h.turns
+                );
+                let geometry = if self.curve.is_some() {
+                    let points = h.points();
+                    Geometry {
+                        lines: points.windows(2).map(|p| [p[0], p[1]]).collect(),
+                        bound: h.radius.hypot(h.height / 2.0).max(1.0),
+                        skipped_tetrahedra: 0,
+                    }
+                } else {
+                    self.geometry.clone()
+                };
+                (
+                    crate::workspace::PlotKind::Helix { parameters: h },
+                    source,
+                    Sampling::default(),
+                    geometry,
+                )
+            };
+            let mut workspace = crate::workspace::Workspace {
+                spatial: Some(sampling),
+                plots: Vec::new(),
+                selected: 0,
+                sampling: CurveSampling::default(),
+            };
+            workspace.add()?;
+            let plot = workspace.selected_mut();
+            plot.object = object;
+            plot.source = source.clone();
+            plot.draft = source;
+            plot.geometry = geometry;
+            workspace.validate()?;
+            self.spatial_workspace = Some(workspace);
+        }
+        self.sync_spatial_workspace();
+        Ok(())
+    }
+    pub fn spatial_active(&self) -> bool {
+        self.curve.is_none() && self.spatial_workspace.is_some()
+    }
+    pub fn sync_spatial_workspace(&mut self) {
+        if let Some(workspace) = &self.spatial_workspace {
+            let plot = workspace.selected();
+            self.geometry = if plot.visible {
+                plot.geometry.clone()
+            } else {
+                Geometry::default()
+            };
+            self.geometry.bound = workspace
+                .plots
+                .iter()
+                .filter(|p| p.visible)
+                .map(|p| p.geometry.bound)
+                .fold(
+                    workspace
+                        .spatial
+                        .unwrap()
+                        .extent
+                        .iter()
+                        .map(|v| v * v)
+                        .sum::<f32>()
+                        .sqrt(),
+                    f32::max,
+                );
+            self.curve = None;
+            self.surface = None;
+            match plot.object {
+                crate::workspace::PlotKind::Surface => {
+                    self.surface = Some(Surface {
+                        source: plot.source.clone(),
+                        sampling: workspace.spatial.expect("spatial settings"),
+                    })
+                }
+                crate::workspace::PlotKind::Helix { parameters } => self.helix = parameters,
+                crate::workspace::PlotKind::Curve => {}
+            }
+        }
+    }
     pub fn request(&mut self, text: &str) -> Result<(), String> {
         self.request_in_mode(text, PlotMode::ThreeD)
     }
@@ -187,7 +308,7 @@ impl Scene {
             && !text.starts_with("set ")
         {
             let source = text.strip_prefix("plot ").unwrap_or(text).trim();
-            let mode = if Equation::references_z(source)? {
+            let mode = if self.spatial_active() || Equation::references_z(source)? {
                 PlotMode::ThreeD
             } else {
                 PlotMode::TwoD
@@ -210,13 +331,24 @@ impl Scene {
             return self.plot_curve(source, sampling);
         }
         if let Some(source) = text.strip_prefix("plot ") {
-            let sampling = self
-                .surface
-                .as_ref()
-                .map_or(Sampling::default(), |s| s.sampling);
+            let sampling = self.surface.as_ref().map_or_else(
+                || {
+                    self.spatial_workspace
+                        .as_ref()
+                        .and_then(|w| w.spatial)
+                        .unwrap_or_default()
+                },
+                |s| s.sampling,
+            );
             self.plot(source.trim(), sampling)
         } else {
-            if (self.surface.is_some() || self.curve.is_some())
+            if (self.surface.is_some()
+                || self.curve.is_some()
+                || self.spatial_active()
+                    && !matches!(
+                        self.spatial_workspace.as_ref().unwrap().selected().object,
+                        crate::workspace::PlotKind::Helix { .. }
+                    ))
                 && !text.to_lowercase().starts_with("create a helix with ")
             {
                 return Err("For this plot use a plot request or its sampling controls. Create a helix to use helix commands.".into());
