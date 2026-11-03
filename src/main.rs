@@ -113,7 +113,10 @@ impl Playground {
         self.restore_snapshot_impl(snapshot, true);
     }
     fn restore_snapshot_impl(&mut self, snapshot: Snapshot, record: bool) {
-        self.plot_mode = if matches!(snapshot, Snapshot::Curve { .. }) {
+        self.plot_mode = if matches!(
+            snapshot,
+            Snapshot::Curve { .. } | Snapshot::Workspace { .. }
+        ) {
             PlotMode::TwoD
         } else {
             PlotMode::ThreeD
@@ -191,14 +194,37 @@ impl Playground {
                             };
                         }
                         if let Some(c) = &self.scene.curve {
+                            self.request = self.scene.workspace.as_ref().map_or_else(
+                                || c.source.clone(),
+                                |w| {
+                                    let draft = &w.selected().draft;
+                                    if draft.is_empty() || draft.trim_start().starts_with("plot ") {
+                                        draft.clone()
+                                    } else {
+                                        format!("plot {draft}")
+                                    }
+                                },
+                            );
                             self.curve_sampling = c.sampling;
                         }
                         self.error = false;
                         self.feedback = if self.scene.curve.is_some() {
                             format!(
-                                "2D plot: {} segments; {} sampling regions skipped. Empty output does not prove no real values exist.",
-                                self.scene.geometry.lines.len(),
-                                self.scene.geometry.skipped_tetrahedra
+                                "2D workspace: {} equations; {} visible segments; {} sampling regions skipped. Empty output does not prove no real values exist.",
+                                self.scene.workspace.as_ref().map_or(1, |w| w.plots.len()),
+                                self.scene.workspace.as_ref().map_or(
+                                    self.scene.geometry.lines.len(),
+                                    |w| w
+                                        .plots
+                                        .iter()
+                                        .filter(|p| p.visible)
+                                        .map(|p| p.geometry.lines.len())
+                                        .sum()
+                                ),
+                                self.scene.workspace.as_ref().map_or(
+                                    self.scene.geometry.skipped_tetrahedra,
+                                    |w| w.plots.iter().map(|p| p.geometry.skipped_tetrahedra).sum()
+                                )
                             )
                         } else if self.scene.geometry.lines.is_empty() {
                             format!(
@@ -220,6 +246,11 @@ impl Playground {
                         #[cfg(not(target_arch = "wasm32"))]
                         if let Some(context) = &self.pending_diagnostics {
                             context.rejected(&error);
+                        }
+                        if self.scene.curve.is_some()
+                            && let Some(workspace) = &mut self.scene.workspace
+                        {
+                            workspace.selected_mut().error = Some(error.clone());
                         }
                         self.error = true;
                         self.feedback = error;
@@ -289,7 +320,7 @@ impl Playground {
         ui.label("Newest first · up to 200 entries · timestamps in UTC");
         #[cfg(target_arch = "wasm32")]
         ui.small("Browser-local history: saved on changes on this origin only; may be cleared by your browser. Tabs do not live-sync; the last successful save wins. Clear saves an empty history unless saving is disabled (see warning).");
-        ui.small("Restore uses saved plot settings. Edit/retry fills the input; current settings apply when submitted.");
+        ui.small("Restore replaces the workspace using saved plot settings. Edit/retry fills the input; current settings apply when submitted.");
         if let Some(path) = &self.history.path {
             ui.label(format!("Storage: {}", path.display()));
         }
@@ -325,11 +356,16 @@ impl Playground {
                         match &entry.outcome {
                             Outcome::Success { snapshot } => {
                                 ui.colored_label(egui::Color32::LIGHT_GREEN, "Succeeded");
-                                ui.small(if matches!(snapshot, Snapshot::Curve { .. }) {
-                                    "2D curve"
-                                } else {
-                                    "3D plot"
-                                });
+                                ui.small(
+                                    if matches!(
+                                        snapshot,
+                                        Snapshot::Curve { .. } | Snapshot::Workspace { .. }
+                                    ) {
+                                        "2D curve"
+                                    } else {
+                                        "3D plot"
+                                    },
+                                );
                                 if let Snapshot::Surface { sampling, .. } = snapshot {
                                     ui.small(format!(
                                         "Bounds ±{:?}; {} cells/axis",
@@ -341,13 +377,19 @@ impl Playground {
                                         restore = Some(snapshot.clone());
                                     }
                                     if ui.button("Edit/retry").clicked() {
-                                        self.plot_mode =
-                                            if matches!(snapshot, Snapshot::Curve { .. }) {
-                                                PlotMode::TwoD
-                                            } else {
-                                                PlotMode::ThreeD
-                                            };
-                                        retry = Some(snapshot.request());
+                                        self.plot_mode = if matches!(
+                                            snapshot,
+                                            Snapshot::Curve { .. } | Snapshot::Workspace { .. }
+                                        ) {
+                                            PlotMode::TwoD
+                                        } else {
+                                            PlotMode::ThreeD
+                                        };
+                                        if matches!(snapshot, Snapshot::Workspace { .. }) {
+                                            restore = Some(snapshot.clone());
+                                        } else {
+                                            retry = Some(snapshot.request());
+                                        }
                                     }
                                 });
                             }
@@ -374,6 +416,144 @@ impl Playground {
 }
 
 impl Playground {
+    fn equations_ui(&mut self, ui: &mut egui::Ui) {
+        let active = self.scene.curve.is_some();
+        if !active {
+            let label = if self.scene.workspace.is_some() {
+                "Return to 2D workspace"
+            } else {
+                "New 2D workspace"
+            };
+            if ui.button(label).clicked() {
+                // Preserve the current 3D plot in history before switching dimensions.
+                let snapshot = Snapshot::capture(&self.scene);
+                self.history
+                    .record(snapshot.request(), Outcome::Success { snapshot });
+                if self.scene.workspace.is_none() {
+                    let mut workspace = math_playground::workspace::Workspace {
+                        plots: Vec::new(),
+                        selected: 0,
+                        sampling: self.curve_sampling,
+                    };
+                    workspace.add().expect("new workspace");
+                    self.scene.workspace = Some(workspace);
+                }
+                self.scene.sync_workspace();
+                self.plot_mode = PlotMode::TwoD;
+                self.request = self
+                    .scene
+                    .workspace
+                    .as_ref()
+                    .unwrap()
+                    .selected()
+                    .draft
+                    .clone();
+                self.feedback = "2D workspace: select or add an equation, then Apply.".into();
+                self.error = false;
+                self.record_workspace();
+            }
+            return;
+        }
+        let Some(workspace) = &mut self.scene.workspace else {
+            return;
+        };
+        ui.heading("Equations · 2D");
+        ui.small("Select a row to edit or explore it. Hover inspects the selected visible curve.");
+        let mut changed = false;
+        let mut remove = None;
+        let mut select = None;
+        for plot in &mut workspace.plots {
+            ui.push_id(plot.id, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    changed |= ui
+                        .checkbox(&mut plot.visible, "")
+                        .on_hover_text("Show equation")
+                        .changed();
+                    let color =
+                        egui::Color32::from_rgb(plot.color[0], plot.color[1], plot.color[2]);
+                    let (dot, _) =
+                        ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                    ui.painter().circle_filled(dot.center(), 4.0, color);
+                    let label = if plot.source.is_empty() {
+                        "New equation"
+                    } else {
+                        &plot.source
+                    };
+                    if ui
+                        .selectable_label(plot.id == workspace.selected, label)
+                        .clicked()
+                    {
+                        select = Some(plot.id);
+                    }
+                    if ui.small_button("Remove").clicked() {
+                        remove = Some(plot.id);
+                    }
+                });
+                if let Some(error) = &plot.error {
+                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                }
+                if !plot.draft.is_empty()
+                    && plot
+                        .draft
+                        .trim()
+                        .strip_prefix("plot ")
+                        .unwrap_or(plot.draft.trim())
+                        != plot.source
+                {
+                    ui.small("Unapplied edit; previous plot retained.");
+                }
+            });
+        }
+        let selection_changed = select.is_some_and(|id| id != workspace.selected);
+        if let Some(id) = select.filter(|_| selection_changed) {
+            workspace.selected = id;
+        }
+        if let Some(id) = remove {
+            workspace.remove(id);
+            changed = true;
+        }
+        if ui
+            .add_enabled(
+                workspace.plots.len() < math_playground::workspace::MAX_PLOTS,
+                egui::Button::new("Add equation"),
+            )
+            .clicked()
+        {
+            workspace.add().expect("bounded Add button");
+            changed = true;
+        }
+        ui.small("Up to 8 equations. Bounds and sampling apply to all rows.");
+        if changed || selection_changed {
+            self.request = workspace.selected().draft.clone();
+            self.scene.sync_workspace();
+            self.error = self
+                .scene
+                .workspace
+                .as_ref()
+                .unwrap()
+                .selected()
+                .error
+                .is_some();
+            self.feedback = self
+                .scene
+                .workspace
+                .as_ref()
+                .unwrap()
+                .selected()
+                .error
+                .clone()
+                .unwrap_or_else(|| "2D workspace updated. Apply edits to the selected row.".into());
+            if changed {
+                self.record_workspace();
+            }
+        }
+        ui.separator();
+    }
+    fn record_workspace(&mut self) {
+        let snapshot = Snapshot::capture(&self.scene);
+        self.history
+            .record(snapshot.request(), Outcome::Success { snapshot });
+    }
     fn about_ui(&mut self, ctx: &egui::Context) -> Option<egui::Rect> {
         if !self.about_open {
             return None;
@@ -446,12 +626,16 @@ impl Playground {
                 ui.small("Auto: equations with z use 3D; otherwise 2D. Bare x^2 means y=x^2. Overrides apply on the next request. Helices are 3D.");
             });
             ui.separator();
+            if self.scene.curve.is_some() { ui.small("Edit the selected equation below. Apply updates only that row; Add equation creates another."); }
             ui.add_enabled_ui(self.pending.is_none(), |ui| {
                 ui.horizontal(|ui| {
                     let response = ui.add(egui::TextEdit::singleline(&mut self.request)
                         .font(egui::FontId::monospace(14.0))
                         .desired_width((ui.available_width() - 85.0).max(100.0))
-                        .hint_text("plot x^2 - y^2 - z^2 = 0"));
+                        .hint_text(if self.scene.curve.is_some() { "Enter a 2D equation, e.g. y=x^2" } else { "plot x^2 - y^2 - z^2 = 0" }));
+                    if response.changed() && self.scene.curve.is_some() && let Some(workspace) = &mut self.scene.workspace {
+                        workspace.selected_mut().draft = self.request.clone();
+                    }
                     let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if ui.button("Apply").clicked() || enter {
                         let request = self.request.clone();
@@ -481,7 +665,7 @@ impl Playground {
                 ui.label("Sampling can miss thin features, singularities and even roots; discontinuities can mislead.");
             });
             ui.separator();
-            let canvas_height = if compact { (ui.ctx().content_rect().height() * 0.48).clamp(220.0, 500.0) } else { (ui.available_height() - 210.0).max(120.0) };
+            let canvas_height = if compact { (ui.ctx().content_rect().height() * 0.48).clamp(220.0, 500.0) } else { (ui.available_height() - 255.0).max(120.0) };
             let mut inspected_point = None;
             let mut inspection_equation = None;
             let mut tangent = None;
@@ -490,6 +674,7 @@ impl Playground {
                 let controls = |ui: &mut egui::Ui| {
                     ui.set_width(if compact { ui.available_width() } else { 255.0 });
                     ui.add_enabled_ui(self.pending.is_none(), |ui| {
+                        self.equations_ui(ui);
                         if let Some(curve)=&self.scene.curve {
                             let source=curve.source.clone();
                             let applied_extent=f64::from(curve.sampling.extent[0]);
@@ -503,7 +688,10 @@ impl Playground {
                                 let settings=self.curve_sampling;
                                 self.pending_history_request=Some(format!("plot {source}"));
                                 let source = source.clone();
-                                self.start(move |scene|scene.plot_curve(&source,settings));
+                                self.start(move |scene|{
+                                    if let Some(workspace) = &mut scene.workspace { workspace.rebuild(settings)?; scene.sync_workspace(); Ok(()) }
+                                    else { scene.plot_curve(&source,settings) }
+                                });
                             }
                             ui.checkbox(&mut self.tangent_enabled, "Explore tangent");
                             if self.tangent_enabled {
@@ -593,26 +781,30 @@ impl Playground {
                 };
                 if compact {
                     egui::CollapsingHeader::new("Plot controls and exploration").show(ui, controls);
-                } else { ui.vertical(controls); }
+                } else { ui.vertical(|ui| { egui::ScrollArea::vertical().id_salt("equation_controls_scroll").max_height(canvas_height).show(ui, controls); }); }
                 inspection_equation = if let Some(curve) = &self.scene.curve {
                     math_playground::expression::Equation::planar(&curve.source).ok()
                 } else if let Some(surface) = &self.scene.surface {
                     math_playground::expression::Equation::parse(&surface.source).ok()
                 } else { None };
-                let tangent_source = if self.tangent_enabled { self.scene.curve.as_ref().map(|curve|curve.source.as_str()) } else { None };
-                let area=if self.area_enabled {
+                let selected_visible = self.scene.workspace.as_ref().is_none_or(|w|w.selected().visible);
+                let tangent_source = if self.tangent_enabled && selected_visible { self.scene.curve.as_ref().map(|curve|curve.source.as_str()) } else { None };
+                let area=if self.area_enabled && selected_visible {
                     self.scene.curve.as_ref().and_then(|curve|self.area_cache.get(&curve.source,self.area_bounds[0],self.area_bounds[1]).as_ref().ok())
                 } else {None};
                 let slice = if self.slice_enabled {
                     self.scene.surface.as_ref().and_then(|surface| self.slice_cache.get(&surface.source, surface.sampling, self.slice_axis, self.slice_position).as_ref().ok())
                 } else { None };
                 let axis_extent = Some(self.scene.surface.as_ref().map_or([self.scene.helix.radius,self.scene.helix.radius,self.scene.helix.height/2.0], |s|s.sampling.extent));
-                let output=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling), view::Overlays {tangent_source,area,slice,axis_markers:self.axis_markers,axis_extent});
+                let output=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling), view::Overlays {plots: self.scene.curve.as_ref().and(self.scene.workspace.as_ref()),tangent_source,area,slice,axis_markers:self.axis_markers,axis_extent});
                 canvas_rect=output.rect;
                 inspected_point=output.selected;
                 tangent=output.tangent;
             });
             ui.allocate_ui(egui::vec2(ui.available_width(), 85.0), |ui| {
+                if let Some(w) = self.scene.workspace.as_ref().filter(|_|self.scene.curve.is_some()) {
+                    ui.label(format!("Selected equation: {}{}", w.selected().source, if w.selected().visible { "" } else { " (hidden)" }));
+                }
                 view::inspection_readout(ui, inspected_point, inspection_equation.as_ref());
                 if self.tangent_enabled && self.scene.curve.is_some() {
                     match &tangent {
@@ -741,6 +933,128 @@ mod tests {
             std::thread::yield_now();
         }
         assert!(app.pending.is_none());
+    }
+    #[test]
+    fn clicking_equation_rows_selects_without_adding_history() {
+        let mut app = Playground::default();
+        app.scene
+            .plot_curve("x^2", CurveSampling::default())
+            .unwrap();
+        let w = app.scene.workspace.as_mut().unwrap();
+        let first = w.selected;
+        w.add().unwrap();
+        w.apply("sin(x)").unwrap();
+        app.scene.sync_workspace();
+        app.record_workspace();
+        let entries = app.history.history.entries.len();
+        let ctx = egui::Context::default();
+        let mut point = egui::Pos2::ZERO;
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.equations_ui(ui));
+            output.textures_delta.clear();
+            point = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(t) if t.galley.job.text == "x^2" => {
+                        Some(t.pos + egui::vec2(5.0, 5.0))
+                    }
+                    _ => None,
+                })
+                .expect("first equation is selectable");
+        }
+        // Select a different equation, then click that same selected row again.
+        for _ in 0..2 {
+            for pressed in [true, false] {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        events: vec![
+                            egui::Event::PointerMoved(point),
+                            egui::Event::PointerButton {
+                                pos: point,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: egui::Modifiers::default(),
+                            },
+                        ],
+                        ..Default::default()
+                    },
+                    |ui| app.equations_ui(ui),
+                );
+                output.textures_delta.clear();
+            }
+            assert_eq!(app.scene.workspace.as_ref().unwrap().selected, first);
+            assert_eq!(app.request, "x^2");
+            assert_eq!(app.scene.curve.as_ref().unwrap().source, "x^2");
+            assert_eq!(app.history.history.entries.len(), entries);
+        }
+    }
+    #[test]
+    fn workspace_startup_and_failed_worker_preserve_rows_and_saved_selection() {
+        let mut scene = Scene::default();
+        scene.plot_curve("x^2", CurveSampling::default()).unwrap();
+        let workspace = scene.workspace.as_mut().unwrap();
+        workspace.add().unwrap();
+        workspace.apply("x^2+y^2=1").unwrap();
+        workspace.sampling = CurveSampling {
+            extent: [3.0, 4.0],
+            samples: 256,
+        };
+        workspace.plots[0].visible = false;
+        scene.sync_workspace();
+        let snapshot = Snapshot::capture(&scene);
+        let mut history = Store::session();
+        history.record(
+            snapshot.request(),
+            Outcome::Success {
+                snapshot: snapshot.clone(),
+            },
+        );
+        let mut app = Playground::with_history(history);
+        finish_startup(&mut app);
+        assert_eq!(app.plot_mode, PlotMode::TwoD);
+        assert_eq!(app.curve_sampling.extent, [3.0, 4.0]);
+        assert!(app.request.contains("x^2+y^2=1"));
+        assert_eq!(Snapshot::capture(&app.scene), snapshot);
+        assert_eq!(app.history.history.entries.len(), 1);
+        app.request = "broken(".into();
+        app.scene.workspace.as_mut().unwrap().selected_mut().draft = app.request.clone();
+        app.pending_history_request = Some(app.request.clone());
+        app.start(|scene| scene.request_in_mode("broken(", PlotMode::TwoD));
+        finish_startup(&mut app);
+        assert!(app.error);
+        let w = app.scene.workspace.as_ref().unwrap();
+        assert_eq!(w.plots.len(), 2);
+        assert_eq!(w.selected().source, "x^2+y^2=1");
+        assert_eq!(w.selected().draft, "broken(");
+        assert!(w.selected().error.is_some());
+        assert!(!w.selected().geometry.lines.is_empty());
+        assert!(matches!(
+            app.history.history.entries.last().unwrap().outcome,
+            Outcome::Error { .. }
+        ));
+        for size in [egui::vec2(320.0, 600.0), egui::vec2(1150.0, 760.0)] {
+            let ctx = egui::Context::default();
+            for _ in 0..3 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let (canvas, _) = app.draw(ui);
+                        assert!(canvas.width() >= 50.0);
+                    },
+                );
+                output.textures_delta.clear();
+                for shape in &output.shapes {
+                    let bounds = shape.shape.visual_bounding_rect();
+                    if bounds.is_positive() {
+                        assert!(bounds.min.is_finite() && bounds.max.is_finite());
+                    }
+                }
+            }
+        }
     }
     #[test]
     fn about_source_click_requests_repository_in_a_new_tab() {

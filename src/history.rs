@@ -19,6 +19,9 @@ const MAX_FILE_BYTES: u64 = 2_000_000;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Snapshot {
+    Workspace {
+        workspace: crate::workspace::Workspace,
+    },
     Curve {
         equation: String,
         sampling: crate::curve::CurveSampling,
@@ -33,6 +36,22 @@ pub enum Snapshot {
 }
 impl Snapshot {
     pub fn capture(scene: &Scene) -> Self {
+        if scene.curve.is_some()
+            && let Some(w) = &scene.workspace
+            && (w.selected().id != 1
+                || w.plots.len() != 1
+                || !w.selected().visible
+                || w.selected().source.is_empty()
+                || w.selected().color != [100, 190, 255])
+        {
+            let mut workspace = w.clone();
+            for plot in &mut workspace.plots {
+                plot.geometry = Default::default();
+                plot.draft.clear();
+                plot.error = None;
+            }
+            return Self::Workspace { workspace };
+        }
         if let Some(c) = &scene.curve {
             return Self::Curve {
                 equation: c.source.clone(),
@@ -49,6 +68,7 @@ impl Snapshot {
     }
     fn validate(&self) -> Result<(), String> {
         match self {
+            Self::Workspace { workspace } => workspace.validate()?,
             Self::Curve { equation, sampling } => {
                 Equation::planar(equation)?;
                 sampling.validate()?;
@@ -65,13 +85,30 @@ impl Snapshot {
     }
     pub fn restore(&self, scene: &mut Scene) -> Result<(), String> {
         match self {
-            Self::Curve { equation, sampling } => scene.plot_curve(equation, *sampling),
+            Self::Workspace { workspace } => {
+                let mut workspace = workspace.clone();
+                workspace.restore()?;
+                scene.workspace = Some(workspace);
+                scene.sync_workspace();
+                Ok(())
+            }
+            Self::Curve { equation, sampling } => {
+                let workspace = crate::workspace::Workspace::single(equation, *sampling)?;
+                scene.workspace = Some(workspace);
+                scene.sync_workspace();
+                Ok(())
+            }
             Self::Helix { helix } => scene.replace(*helix),
             Self::Surface { equation, sampling } => scene.plot(equation, *sampling),
         }
     }
     pub fn request(&self) -> String {
         match self {
+            Self::Workspace { workspace } => format!(
+                "2D workspace ({} equations): {}",
+                workspace.plots.len(),
+                workspace.selected().source
+            ),
             Self::Curve { equation, .. } => format!("plot {equation}"),
             Self::Helix { helix } => format!(
                 "create a helix with radius {} and height {} and turns {}",
@@ -297,6 +334,7 @@ impl Store {
         let parent = path.parent().ok_or("Invalid history path.")?;
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         let bytes = serde_json::to_vec_pretty(&self.history).map_err(|e| e.to_string())?;
+        History::decode(&bytes)?;
         let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
         temp.write_all(&bytes).map_err(|e| e.to_string())?;
         temp.as_file().sync_all().map_err(|e| e.to_string())?;

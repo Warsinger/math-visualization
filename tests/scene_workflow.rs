@@ -420,3 +420,58 @@ fn create_replaces_the_single_selected_object_with_defaults() {
         }
     );
 }
+
+#[test]
+fn multi_plot_history_is_complete_and_dimension_switches_preserve_session_workspace() {
+    use math_playground::{
+        curve::CurveSampling,
+        history::{History, Outcome, Snapshot},
+        scene::PlotMode,
+    };
+    let mut scene = Scene::default();
+    scene.plot_curve("x^2", CurveSampling::default()).unwrap();
+    let w = scene.workspace.as_mut().unwrap();
+    w.add().unwrap();
+    w.apply("x^2+y^2=1").unwrap();
+    w.plots[0].visible = false;
+    scene.sync_workspace();
+    let snapshot = Snapshot::capture(&scene);
+    let mut history = History::default();
+    history.record(
+        snapshot.request(),
+        Outcome::Success {
+            snapshot: snapshot.clone(),
+        },
+    );
+    let decoded = History::decode(&serde_json::to_vec(&history).unwrap()).unwrap();
+    let Outcome::Success { snapshot: saved } = &decoded.entries[0].outcome else {
+        panic!()
+    };
+    let mut restored = Scene::default();
+    saved.restore(&mut restored).unwrap();
+    assert_eq!(Snapshot::capture(&restored), snapshot);
+    assert!(!restored.workspace.as_ref().unwrap().plots[0].visible);
+    assert!(!restored.geometry.lines.is_empty());
+    scene
+        .request_in_mode("x^2+y^2+z^2=1", PlotMode::Auto)
+        .unwrap();
+    assert!(scene.surface.is_some());
+    assert_eq!(scene.workspace, restored.workspace);
+    scene.sync_workspace();
+    assert_eq!(Snapshot::capture(&scene), snapshot);
+    scene.workspace.as_mut().unwrap().selected_mut().visible = false;
+    scene.sync_workspace();
+    assert!(scene.geometry.lines.is_empty());
+    assert!(
+        scene
+            .workspace
+            .as_ref()
+            .unwrap()
+            .plots
+            .iter()
+            .all(|p| !p.geometry.lines.is_empty())
+    );
+    let mut corrupt = serde_json::to_value(&history).unwrap();
+    corrupt["entries"][0]["outcome"]["snapshot"]["workspace"]["selected"] = 999.into();
+    assert!(History::decode(&serde_json::to_vec(&corrupt).unwrap()).is_err());
+}

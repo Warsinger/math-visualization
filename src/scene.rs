@@ -1,4 +1,4 @@
-use crate::curve::{self, CurveSampling};
+use crate::curve::CurveSampling;
 use crate::{
     command,
     expression::Equation,
@@ -70,6 +70,7 @@ impl Helix {
 /// Both UI controls and commands replace this same validated scene state.
 #[derive(Clone)]
 pub struct Scene {
+    pub workspace: Option<crate::workspace::Workspace>,
     pub helix: Helix,
     pub surface: Option<Surface>,
     pub geometry: Geometry,
@@ -91,6 +92,7 @@ pub struct Surface {
 impl Default for Scene {
     fn default() -> Self {
         let mut scene = Self {
+            workspace: None,
             helix: Helix::default(),
             surface: None,
             geometry: Geometry::default(),
@@ -105,6 +107,7 @@ impl Scene {
     pub fn replace(&mut self, helix: Helix) -> Result<(), String> {
         let helix = helix.validate()?;
         let points = helix.points();
+        self.reset_dimension_draft();
         self.geometry = Geometry {
             lines: points.windows(2).map(|p| [p[0], p[1]]).collect(),
             bound: helix.radius.hypot(helix.height / 2.0).max(1.0),
@@ -119,6 +122,7 @@ impl Scene {
     pub fn plot(&mut self, source: &str, sampling: Sampling) -> Result<(), String> {
         let equation = Equation::parse(source)?;
         let geometry = geometry::mesh(&equation, sampling)?;
+        self.reset_dimension_draft();
         self.geometry = geometry;
         self.curve = None;
         self.surface = Some(Surface {
@@ -132,15 +136,43 @@ impl Scene {
         self.request_in_mode(text, PlotMode::ThreeD)
     }
     pub fn plot_curve(&mut self, source: &str, sampling: CurveSampling) -> Result<(), String> {
-        let geometry = curve::sample(source, sampling)?;
-        self.geometry = geometry;
-        self.surface = None;
-        self.curve = Some(Curve {
-            source: source.into(),
-            sampling,
-        });
+        if let Some(mut workspace) = self.workspace.clone() {
+            if workspace.sampling != sampling {
+                workspace.rebuild(sampling)?;
+            }
+            workspace.apply(source)?;
+            self.workspace = Some(workspace);
+        } else {
+            self.workspace = Some(crate::workspace::Workspace::single(source, sampling)?);
+        }
+        self.sync_workspace();
         Ok(())
     }
+    fn reset_dimension_draft(&mut self) {
+        if self.curve.is_some()
+            && let Some(workspace) = &mut self.workspace
+        {
+            let plot = workspace.selected_mut();
+            plot.draft = plot.source.clone();
+            plot.error = None;
+        }
+    }
+    pub fn sync_workspace(&mut self) {
+        if let Some(workspace) = &self.workspace {
+            let plot = workspace.selected();
+            self.geometry = if plot.visible {
+                plot.geometry.clone()
+            } else {
+                Geometry::default()
+            };
+            self.curve = Some(Curve {
+                source: plot.source.clone(),
+                sampling: workspace.sampling,
+            });
+            self.surface = None;
+        }
+    }
+
     pub fn request_in_mode(&mut self, text: &str, mode: PlotMode) -> Result<(), String> {
         let text = text.trim();
         if mode == PlotMode::ThreeD
@@ -167,10 +199,14 @@ impl Scene {
             && !text.starts_with("set ")
         {
             let source = text.strip_prefix("plot ").unwrap_or(text).trim();
-            let sampling = self
-                .curve
-                .as_ref()
-                .map_or(CurveSampling::default(), |c| c.sampling);
+            let sampling = self.curve.as_ref().map_or_else(
+                || {
+                    self.workspace
+                        .as_ref()
+                        .map_or(CurveSampling::default(), |w| w.sampling)
+                },
+                |c| c.sampling,
+            );
             return self.plot_curve(source, sampling);
         }
         if let Some(source) = text.strip_prefix("plot ") {
