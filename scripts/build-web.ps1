@@ -10,7 +10,12 @@ try {
         throw 'Install matching CLI: cargo install wasm-bindgen-cli --version 0.2.129 --locked'
     }
     $messages = & cargo build --locked --release --target wasm32-unknown-unknown --bin math-playground --message-format=json
-    if ($LASTEXITCODE -ne 0) { throw 'Browser compilation failed.' }
+    $buildExit = $LASTEXITCODE
+    foreach ($line in $messages) {
+        $message = $line | ConvertFrom-Json
+        if ($message.reason -eq 'compiler-message' -and $message.message.rendered) { Write-Host $message.message.rendered }
+    }
+    if ($buildExit -ne 0) { throw 'Browser compilation failed.' }
     $output = Join-Path $projectRoot 'target/web-bindgen'
     New-Item -ItemType Directory -Path $output -Force | Out-Null
     $build = $messages | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.reason -eq 'build-script-executed' -and $_.package_id -match 'math-playground' } | Select-Object -Last 1
