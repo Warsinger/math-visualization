@@ -475,3 +475,85 @@ fn multi_plot_history_is_complete_and_dimension_switches_preserve_session_worksp
     corrupt["entries"][0]["outcome"]["snapshot"]["workspace"]["selected"] = 999.into();
     assert!(History::decode(&serde_json::to_vec(&corrupt).unwrap()).is_err());
 }
+
+#[test]
+fn spatial_workspace_mixed_objects_history_and_dimension_transitions() {
+    use math_playground::{
+        curve::CurveSampling,
+        geometry::Sampling,
+        history::{History, Outcome, Snapshot},
+        scene::PlotMode,
+        workspace::PlotKind,
+    };
+    let mut scene = Scene::default();
+    scene.plot("x^2+y^2+z^2=1", Sampling::default()).unwrap();
+    let cached = scene.geometry.lines.clone();
+    scene.enable_spatial_workspace().unwrap();
+    assert_eq!(
+        scene
+            .spatial_workspace
+            .as_ref()
+            .unwrap()
+            .selected()
+            .geometry
+            .lines,
+        cached
+    );
+    scene.request_in_mode("y=x^2", PlotMode::Auto).unwrap();
+    assert!(scene.spatial_active()); // Auto retains surface interpretation in an explicit 3D workspace.
+    assert!(scene.surface.is_some());
+    let w = scene.spatial_workspace.as_mut().unwrap();
+    w.add().unwrap();
+    w.selected_mut().object = PlotKind::Curve;
+    w.apply("x^2+y^2=1").unwrap();
+    w.add().unwrap();
+    w.selected_mut().object = PlotKind::Helix {
+        parameters: Default::default(),
+    };
+    w.apply("helix").unwrap();
+    w.plots[0].visible = false;
+    scene.sync_spatial_workspace();
+    scene
+        .request_in_mode("set radius to 2", PlotMode::Auto)
+        .unwrap();
+    assert_eq!(scene.helix.radius, 2.0);
+    let saved = Snapshot::capture(&scene);
+    let mut history = History::default();
+    history.record(
+        saved.request(),
+        Outcome::Success {
+            snapshot: saved.clone(),
+        },
+    );
+    let decoded = History::decode(&serde_json::to_vec(&history).unwrap()).unwrap();
+    let Outcome::Success { snapshot } = &decoded.entries[0].outcome else {
+        panic!()
+    };
+    let mut restored = Scene::default();
+    snapshot.restore(&mut restored).unwrap();
+    assert_eq!(saved, Snapshot::capture(&restored));
+    assert_eq!(restored.helix.radius, 2.0);
+    assert!(!restored.spatial_workspace.as_ref().unwrap().plots[0].visible);
+    scene
+        .plot_curve("sin(x)", CurveSampling::default())
+        .unwrap();
+    assert!(!scene.spatial_active());
+    let planar = Snapshot::capture(&scene);
+    scene.enable_spatial_workspace().unwrap();
+    assert_eq!(saved, Snapshot::capture(&scene));
+    assert_eq!(
+        scene.workspace.as_ref().unwrap().selected().source,
+        "sin(x)"
+    );
+    planar.restore(&mut scene).unwrap();
+    assert!(!scene.spatial_active());
+    scene.enable_spatial_workspace().unwrap();
+    assert_eq!(saved, Snapshot::capture(&scene));
+    let old = Snapshot::Surface {
+        equation: "z=0".into(),
+        sampling: Sampling::default(),
+    };
+    old.restore(&mut scene).unwrap();
+    assert!(scene.spatial_workspace.is_none());
+    assert_eq!(Snapshot::capture(&scene), old);
+}

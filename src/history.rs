@@ -19,6 +19,9 @@ const MAX_FILE_BYTES: u64 = 2_000_000;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Snapshot {
+    SpatialWorkspace {
+        workspace: crate::workspace::Workspace,
+    },
     Workspace {
         workspace: crate::workspace::Workspace,
     },
@@ -36,6 +39,15 @@ pub enum Snapshot {
 }
 impl Snapshot {
     pub fn capture(scene: &Scene) -> Self {
+        if scene.spatial_active() {
+            let mut workspace = scene.spatial_workspace.as_ref().unwrap().clone();
+            for plot in &mut workspace.plots {
+                plot.geometry = Default::default();
+                plot.draft.clear();
+                plot.error = None;
+            }
+            return Self::SpatialWorkspace { workspace };
+        }
         if scene.curve.is_some()
             && let Some(w) = &scene.workspace
             && (w.selected().id != 1
@@ -68,7 +80,18 @@ impl Snapshot {
     }
     fn validate(&self) -> Result<(), String> {
         match self {
-            Self::Workspace { workspace } => workspace.validate()?,
+            Self::SpatialWorkspace { workspace } => {
+                if workspace.spatial.is_none() {
+                    return Err("3D snapshot requires spatial sampling.".into());
+                }
+                workspace.validate()?;
+            }
+            Self::Workspace { workspace } => {
+                if workspace.spatial.is_some() {
+                    return Err("2D snapshot cannot contain spatial sampling.".into());
+                }
+                workspace.validate()?;
+            }
             Self::Curve { equation, sampling } => {
                 Equation::planar(equation)?;
                 sampling.validate()?;
@@ -84,7 +107,18 @@ impl Snapshot {
         Ok(())
     }
     pub fn restore(&self, scene: &mut Scene) -> Result<(), String> {
+        self.validate()?;
         match self {
+            Self::SpatialWorkspace { workspace } => {
+                if workspace.spatial.is_none() {
+                    return Err("3D snapshot requires spatial sampling.".into());
+                }
+                let mut workspace = workspace.clone();
+                workspace.restore()?;
+                scene.spatial_workspace = Some(workspace);
+                scene.sync_spatial_workspace();
+                Ok(())
+            }
             Self::Workspace { workspace } => {
                 let mut workspace = workspace.clone();
                 workspace.restore()?;
@@ -98,12 +132,34 @@ impl Snapshot {
                 scene.sync_workspace();
                 Ok(())
             }
-            Self::Helix { helix } => scene.replace(*helix),
-            Self::Surface { equation, sampling } => scene.plot(equation, *sampling),
+            Self::Helix { helix } => {
+                let mut fresh = Scene::default();
+                fresh.replace(*helix)?;
+                scene.spatial_workspace = None;
+                scene.helix = fresh.helix;
+                scene.surface = None;
+                scene.curve = None;
+                scene.geometry = fresh.geometry;
+                Ok(())
+            }
+            Self::Surface { equation, sampling } => {
+                let mut fresh = Scene::default();
+                fresh.plot(equation, *sampling)?;
+                scene.spatial_workspace = None;
+                scene.surface = fresh.surface;
+                scene.curve = None;
+                scene.geometry = fresh.geometry;
+                Ok(())
+            }
         }
     }
     pub fn request(&self) -> String {
         match self {
+            Self::SpatialWorkspace { workspace } => format!(
+                "3D workspace ({} objects): {}",
+                workspace.plots.len(),
+                workspace.selected_request()
+            ),
             Self::Workspace { workspace } => format!(
                 "2D workspace ({} equations): {}",
                 workspace.plots.len(),
