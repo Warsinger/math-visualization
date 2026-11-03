@@ -1,15 +1,41 @@
 # Versions and releases
 
-Cargo.toml package.version is the authoritative SemVer, initially 0.1.0. Update Cargo.toml and the root package version in Cargo.lock together in a reviewed PR. Use patch increments for fixes, minor increments for features, and major increments for incompatible public behavior; before 1.0, incompatible changes increment minor. Release candidates use e.g. 0.2.0-rc.1. Numeric components must fit Windows 16-bit version fields; Cargo versions must not include +build metadata.
+## The normal issue workflow
 
-Official build tags are exactly v followed by the Cargo version. A v* tag starts the full CI matrix and read-only validation: exact version match, commit reachable from main, and no existing GitHub release for that tag. API failures fail closed. Never move/reuse an official tag: Git rejects an ordinary duplicate push; protected/immutable tag rules must be configured by a repository administrator to prohibit forced replacement. We do not alter repository administration settings. An existing published release intentionally blocks rebuilding that tag through this workflow; keep the original artifacts or bump the version.
+The implementing agent includes one version bump in every issue PR, in Cargo.toml and Cargo.lock together. A bug fix increments patch (0.2.0 to 0.2.1); a feature increments minor and resets patch (0.2.1 to 0.3.0). Review fixes within the same issue keep its planned version. Documentation-only follow-ups do not need another bump. Major increments require owner agreement.
 
-Tagging/building does not publish a GitHub release or deploy to production. After owner authorization, create the matching annotated tag on a reviewed main commit, push it, wait for all checks, and download the versioned artifacts from that run. Review checksums and build-info.json, then manually create a release for that exact tag and upload those unchanged artifacts; mark -rc/-beta versions as prereleases. Do not rebuild release assets from a different checkout. Publishing permissions remain outside this workflow; contents stays read-only (existing Pages deployment permissions are unchanged). No tag or release is created by implementing this change.
+Before merging, the agent rechecks the version against current main and resolves conflicts. Stacked PRs reserve versions in merge order: versioning #85 is 0.2.0, and About #86 based on it is 0.3.0. The identity CI gate rejects unchanged/backward versions, skipped patch bumps and minor bumps that do not reset patch. It allows stacked minor increments ahead of main; the agent checks the exact next increment again at merge time. There is no automatic version commit after merge and no bump for every CI run. AGENTS.md records the agent's responsibilities for future chats.
 
-Tagged builds display the Cargo version and channel release/prerelease. Untagged CI/PR builds display e.g. 0.1.0+ci.RUN.ATTEMPT.gCOMMIT; local builds display 0.1.0+local.gCOMMIT with .dirty when changes exist. Local source archives without Git use gunknown. No GitHub access is required for local builds. PROFILE and target are included in embedded build metadata; time is omitted for reproducibility. A PR CI revision is the tested merge commit, not necessarily the PR head. Version changes require a source PR; no automatic increment occurs on every build.
+Cargo.toml package.version is the authoritative canonical SemVer. Windows numeric components must fit 16-bit fields; Cargo versions must not include +build metadata. Changes to Cargo.toml require updating the root package version in Cargo.lock.
 
-The UI uses embedded identity; native --build-info emits the exact JSON without opening a window. Packages query that executable and validate Cargo version, revision, target and release profile. Windows string metadata matches the complete display version; numeric Windows version is major.minor.patch.0. Native archive/artifact names include the display version and target; build-info.json comes from the binary, not the packaging checkout. CI summaries report version and package identity. Dirty local packages are labeled explicitly and are not official releases.
+## What a build displays
 
-Browser build-info.json is taken from the Cargo build output that produced the Wasm, copied alongside the runtime and included in its immutable asset hash. Verification checks the JSON bytes are embedded in that Wasm; the web module also exports build_info for diagnostics. The visible version is compiled into the app, so cached code keeps its own identity. HTML revalidates and a new immutable path updates the runtime and sidecar together. Browser-app remains the internal CI artifact name required by deployment; its files carry the complete identity.
+| Build | Example display version | Meaning |
+| --- | --- | --- |
+| PR or feature-branch CI | 0.2.0-dev.ci.123.1+g0123456789ab | Development prerelease; downloadable for testing, not an official desktop release. |
+| Local build | 0.2.0-dev.local+g0123456789ab.dirty | Development prerelease; .dirty appears for uncommitted changes. No GitHub access required. |
+| Clean main CI, push or manual run | 0.2.0 | Current main/web version; channel is main, not a published desktop release. |
+| Matching clean release tag v0.2.0 | 0.2.0 | Release candidate for owner-controlled desktop publication; channel is release. |
 
-Validation covers embedded identity, tag policy/duplicate checks with fixture API responses, the complete browser package and native package metadata on each CI target. A real tag/publication is deliberately not created for validation. About-screen work is stacked on this change in issue #70.
+Source archives without Git use gunknown. Local builds stay development prereleases even on main. Optional explicit prerelease Cargo versions such as 0.3.0-rc.1 remain prereleases and receive .dev suffixes on development builds. A real SemVer hyphen prerelease is used; +commit metadata alone is not a prerelease. Dirty main CI builds cannot get an ordinary stable label. Every build still embeds full commit, dirty state, channel, target, profile and compiler; timestamps are omitted for reproducibility. PR provenance is the tested merge commit, which may differ from the branch head.
+
+## What merging does
+
+A merge to main tests and builds all desktop packages and automatically deploys the web app after checks pass. It does not create a tag or publish a GitHub desktop release. Web can therefore be newer than the latest desktop download. Both use the same canonical version source. We support one current version, without maintenance branches or parallel release lines.
+
+## Publishing a desktop release
+
+1. Obtain explicit owner authorization for the desktop release. Ordinary issue completion or merge approval is not release-publication authorization.
+2. Choose a reviewed main commit and create/push an annotated tag exactly v followed by its Cargo version. Do not reuse or move existing tags.
+3. Tag CI validates exact version match, main ancestry and absence of an existing GitHub release for that tag, then runs the full build/test matrix. API failures fail closed. Tagging does not deploy web or publish desktop.
+4. After checks pass, download that tag run's versioned native archives/checksums and browser artifact if needed. Inspect build-info.json; create the GitHub release manually for the same tag, uploading unchanged artifacts. Mark explicit rc/beta versions as prereleases. Never upload feature-branch/dev artifacts as official releases.
+
+The workflow has no release-publication write permission (existing Pages permissions are unchanged). No tag/release is created by implementing this change. Git rejects ordinary duplicate tag pushes; an administrator must configure protected/immutable tags to prohibit forced replacement. We do not alter repository administration settings. An existing published release blocks rebuilding its tag through this workflow; retain the original artifacts rather than starting another supported release line.
+
+## Metadata consistency
+
+The app uses embedded identity. Native --build-info prints exact compiled JSON without opening a window. Packaging queries that executable and checks Cargo version, revision, target and release profile. Windows string metadata matches display_version; numeric version is major.minor.patch.0. Native archive/artifact names include display_version and target. JSON comes from the binary, not the packaging checkout.
+
+Browser build-info.json comes from the Cargo output that produced the Wasm. It is hashed with the complete runtime; verification checks its bytes are embedded in that Wasm, and build_info is exported for diagnostics. The version label is compiled into the app so cached code identifies itself. HTML revalidation plus immutable paths updates code and metadata together. The internal browser-app CI artifact name remains unchanged for deployment.
+
+Validation covers local/branch/main/tag label modes, dirty/unknown fallbacks, invalid tags, forward version checks, duplicate release/API failures, browser pairing and native packages on every CI target. No live release/tag is created for testing.

@@ -1,3 +1,4 @@
+mod build_identity;
 use std::{env, fs, path::PathBuf, process::Command};
 fn git(args: &[&str]) -> Option<String> {
     let result = Command::new("git").args(args).output().ok()?;
@@ -14,6 +15,7 @@ fn main() {
         "Cargo.toml",
         "Cargo.lock",
         "build.rs",
+        "build_identity.rs",
         "assets/icon/app.ico",
     ] {
         println!("cargo:rerun-if-changed={path}");
@@ -54,41 +56,18 @@ fn main() {
     let revision = git(&["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".into());
     let dirty = git(&["status", "--porcelain"]).is_some_and(|s| !s.is_empty());
     let reference = env::var("GITHUB_REF").unwrap_or_default();
-    let tag = reference.strip_prefix("refs/tags/");
-    if let Some(tag) = tag {
-        assert_eq!(
-            tag,
-            format!("v{version}"),
-            "Release tag must match Cargo.toml"
-        );
-        assert!(!dirty, "Release checkout must be clean");
-    }
-    let channel = if tag.is_some() {
-        if version.contains('-') {
-            "prerelease"
-        } else {
-            "release"
-        }
-    } else if env::var("GITHUB_RUN_ID").is_ok() {
-        "ci"
-    } else {
-        "local"
-    };
-    let short = &revision[..revision.len().min(12)];
-    let display = if tag.is_some() {
-        version.clone()
-    } else {
-        let suffix = if channel == "ci" {
-            format!(
-                "ci.{}.{}.g{short}",
-                env::var("GITHUB_RUN_ID").unwrap(),
-                env::var("GITHUB_RUN_ATTEMPT").unwrap_or_else(|_| "1".into())
-            )
-        } else {
-            format!("local.g{short}")
-        };
-        format!("{version}+{suffix}{}", if dirty { ".dirty" } else { "" })
-    };
+    let event = env::var("GITHUB_EVENT_NAME").unwrap_or_default();
+    let run = env::var("GITHUB_RUN_ID").ok();
+    let attempt = env::var("GITHUB_RUN_ATTEMPT").unwrap_or_else(|_| "1".into());
+    let (display, channel) = build_identity::identity(&build_identity::Build {
+        version: &version,
+        revision: &revision,
+        reference: &reference,
+        event: &event,
+        run: run.as_deref(),
+        attempt: &attempt,
+        dirty,
+    });
     let target = env::var("TARGET").unwrap();
     let profile = env::var("PROFILE").unwrap();
     let rust = Command::new(env::var("RUSTC").unwrap_or_else(|_| "rustc".into()))
