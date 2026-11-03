@@ -1,7 +1,11 @@
 mod build_identity;
 use std::{env, fs, path::PathBuf, process::Command};
 fn git(args: &[&str]) -> Option<String> {
-    let result = Command::new("git").args(args).output().ok()?;
+    let result = Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .args(args)
+        .output()
+        .ok()?;
     result
         .status
         .success()
@@ -20,6 +24,13 @@ fn main() {
     ] {
         println!("cargo:rerun-if-changed={path}");
     }
+    // Match invalidation to the tracked-file dirty-state contract. Keep the
+    // fixed watches above as a no-Git/source-archive fallback.
+    if let Some(paths) = git(&["ls-files", "-z"]) {
+        for path in paths.split('\0').filter(|p| !p.is_empty()) {
+            println!("cargo:rerun-if-changed={path}");
+        }
+    }
     for variable in [
         "GITHUB_REF",
         "GITHUB_RUN_ID",
@@ -28,13 +39,16 @@ fn main() {
     ] {
         println!("cargo:rerun-if-env-changed={variable}");
     }
-    for path in ["HEAD", "index"] {
-        if let Some(path) = git(&["rev-parse", "--git-path", path]) {
+    for path in ["HEAD", "index", "packed-refs", "refs"] {
+        if let Some(path) = git(&["rev-parse", "--git-path", path])
+            && std::path::Path::new(&path).exists()
+        {
             println!("cargo:rerun-if-changed={path}");
         }
     }
     if let Some(reference) = git(&["symbolic-ref", "-q", "HEAD"])
         && let Some(path) = git(&["rev-parse", "--git-path", &reference])
+        && std::path::Path::new(&path).exists()
     {
         println!("cargo:rerun-if-changed={path}");
     }
@@ -54,7 +68,8 @@ fn main() {
         );
     }
     let revision = git(&["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".into());
-    let dirty = git(&["status", "--porcelain"]).is_some_and(|s| !s.is_empty());
+    let dirty =
+        git(&["status", "--porcelain", "--untracked-files=no"]).is_some_and(|s| !s.is_empty());
     let reference = env::var("GITHUB_REF").unwrap_or_default();
     let event = env::var("GITHUB_EVENT_NAME").unwrap_or_default();
     let run = env::var("GITHUB_RUN_ID").ok();
