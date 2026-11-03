@@ -384,6 +384,7 @@ impl Playground {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
             if compact { ui.spacing_mut().interact_size.y = 32.0; }
             ui.heading("Mathematical playground");
+            ui.small(format!("Version {}", math_playground::version::DISPLAY));
             ui.label("Cartesian curves, helices and implicit surfaces.");
             ui.add_enabled_ui(self.pending.is_none(),|ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -618,6 +619,10 @@ impl eframe::App for Playground {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> std::process::ExitCode {
+    if std::env::args().any(|arg| arg == "--build-info") {
+        println!("{}", math_playground::version::JSON);
+        return std::process::ExitCode::SUCCESS;
+    }
     let log = logging::init();
     let simulate_error = std::env::args_os()
         .skip(1)

@@ -33,3 +33,10 @@ assert.equal(ico.readUInt16LE(2), 1);
 assert.equal(ico.readUInt16LE(4), 3);
 assert.deepEqual([0, 1, 2].map(i => ico[6 + i * 16]), [16, 32, 48]);
 console.log(`Verified browser asset pair: ${path[2]}`);
+
+const identity=files.get('build-info.json');
+const build=JSON.parse(identity);
+assert.equal(build.target,'wasm32-unknown-unknown');
+assert.equal(build.profile,'release');
+assert.ok(wasm.includes(identity),'Browser sidecar must match identity embedded in Wasm');
+console.log('Verified browser identity: '+build.display_version+' '+build.revision);

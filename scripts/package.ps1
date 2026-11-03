@@ -7,7 +7,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$packageName = "math-playground-$Target"
+
 $executable = if ($Target -eq 'x86_64-pc-windows-msvc') { 'math-playground.exe' } else { 'math-playground' }
 $binary = Join-Path $projectRoot "target/$Target/release/$executable"
 if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) { throw "Missing release executable: $binary" }
@@ -38,6 +38,23 @@ if ($Target -eq 'x86_64-pc-windows-msvc') {
     $types = @(for ($i = 0; $i -lt $count; $i++) { [BitConverter]::ToUInt32($bytes, $resourceOffset + 16 + 8 * $i) })
     if (3 -notin $types -or 14 -notin $types) { throw 'Missing Windows icon/image-group resources.' }
 }
+# Query the executable being shipped, never reconstruct identity at packaging time.
+$info = (& $binary --build-info | ConvertFrom-Json)
+if ($LASTEXITCODE -ne 0) { throw 'Cannot read embedded build identity.' }
+$metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
+$version = ($metadata.packages | Where-Object name -eq 'math-playground').version
+if ($info.version -ne $version -or $info.target -ne $Target -or $info.profile -ne 'release') { throw 'Embedded identity does not match package version/target/profile.' }
+$revision = git -C $projectRoot rev-parse HEAD
+if ($LASTEXITCODE -ne 0 -or $info.revision -ne $revision) { throw 'Binary source revision does not match checkout.' }
+if ($Target -eq 'x86_64-pc-windows-msvc') {
+    $windowsInfo = (Get-Item -LiteralPath $binary).VersionInfo
+    $parts = $version.Split('-')[0].Split('.')
+    if ($windowsInfo.FileMajorPart -ne [int]$parts[0] -or $windowsInfo.FileMinorPart -ne [int]$parts[1] -or $windowsInfo.FileBuildPart -ne [int]$parts[2] -or $windowsInfo.FilePrivatePart -ne 0) { throw 'Windows numeric version differs from Cargo version.' }
+    if ($windowsInfo.ProductVersion -ne $info.display_version -or $windowsInfo.FileVersion -ne $info.display_version) { throw 'Windows version strings differ from embedded identity.' }
+}
+$packageName = "math-playground-$($info.display_version)-$Target"
+if ($env:GITHUB_OUTPUT) { "package_name=$packageName" >> $env:GITHUB_OUTPUT }
+Write-Output "Packaging $($info.display_version) ($($info.revision))"
 $dist = Join-Path $projectRoot 'dist'
 # A fresh staging directory avoids including stale files on repeated local runs.
 $stage = Join-Path $dist ([guid]::NewGuid().ToString())
@@ -59,11 +76,6 @@ if ($Target -eq 'x86_64-pc-windows-msvc') {
     $symbols = @('math_playground.pdb')
 }
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/DOWNLOADS.md') -Destination (Join-Path $package 'RUNNING.md')
-$revision = git -C $projectRoot rev-parse HEAD
-if ($LASTEXITCODE -ne 0) { throw 'Cannot determine source revision.' }
-$rustVersion = rustc +stable --version
-if ($LASTEXITCODE -ne 0) { throw 'Cannot determine Rust version.' }
-$info = [ordered]@{ target = $Target; revision = $revision; rust = $rustVersion }
 $info | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $package 'build-info.json') -Encoding utf8
 $expected = @($executable, 'RUNNING.md', 'build-info.json') + $symbols + $icons | Sort-Object
 $actual = @(Get-ChildItem -LiteralPath $package -File | Select-Object -ExpandProperty Name | Sort-Object)
@@ -89,3 +101,5 @@ if (Compare-Object $expectedEntries $entries) { throw 'Archive contains missing 
 $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
 "$digest  $([System.IO.Path]::GetFileName($archive))" | Set-Content -LiteralPath (Join-Path $dist "$packageName.sha256") -Encoding ascii
 Write-Output "Verified $archive ($Target): executable, instructions, build metadata, and SHA-256."
+
+if ($env:GITHUB_STEP_SUMMARY) { "Native package: $packageName; revision $($info.revision)" >> $env:GITHUB_STEP_SUMMARY }

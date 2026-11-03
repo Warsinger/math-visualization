@@ -101,3 +101,7 @@ fallback for a window manager which fails to relocate an off-screen window.
 
 Browser layout remains session-only; this native feature does not enable localStorage
 or persist browser history (#55).
+
+## Package identity
+
+Native archive names now include the full display version before the platform target. The archive contains build-info.json from the compiled executable. Run the executable with --build-info to inspect its identity without opening the app. See [RELEASING.md](RELEASING.md) for version policy, tags and release steps.

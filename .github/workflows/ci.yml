@@ -2,6 +2,7 @@ name: Rust checks
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
     inputs:
@@ -30,7 +31,23 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  identity:
+    name: Validate version identity
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Validate version and release uniqueness
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/release-policy.mjs
   web:
+    needs: identity
     name: Build browser app
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -158,6 +175,7 @@ jobs:
           PAGES_CONFIRM: ${{ inputs.confirm }}
         run: node scripts/pages-operation.mjs
   coverage:
+    needs: identity
     name: Coverage (Linux debug)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -205,6 +223,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   formatting:
+    needs: identity
     name: Formatting
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -267,15 +286,16 @@ jobs:
       - name: Build release executable
         run: cargo +stable build --locked --release --target ${{ matrix.target }}
       - name: Package and verify contents
+        id: package
         run: ./scripts/package.ps1 -Target '${{ matrix.target }}'
       - name: Upload downloadable package and checksum
         uses: actions/upload-artifact@v6
         with:
-          name: math-playground-${{ matrix.target }}
+          name: ${{ steps.package.outputs.package_name }}
           path: |
-            dist/math-playground-${{ matrix.target }}.zip
-            dist/math-playground-${{ matrix.target }}.tar.gz
-            dist/math-playground-${{ matrix.target }}.sha256
+            dist/math-playground-*.zip
+            dist/math-playground-*.tar.gz
+            dist/math-playground-*.sha256
           if-no-files-found: error
           retention-days: 14
 
