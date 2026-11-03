@@ -101,17 +101,21 @@ impl Playground {
             ..Default::default()
         };
         if let Some(snapshot) = latest {
-            app.restore_snapshot(snapshot);
+            app.restore_snapshot_impl(snapshot, false);
         }
         app
     }
     fn restore_snapshot(&mut self, snapshot: Snapshot) {
+        self.restore_snapshot_impl(snapshot, true);
+    }
+    fn restore_snapshot_impl(&mut self, snapshot: Snapshot, record: bool) {
         self.plot_mode = if matches!(snapshot, Snapshot::Curve { .. }) {
             PlotMode::TwoD
         } else {
             PlotMode::ThreeD
         };
         self.request = snapshot.request();
+        self.pending_history_request = record.then(|| self.request.clone());
         #[cfg(not(target_arch = "wasm32"))]
         let diagnostics = match &snapshot {
             Snapshot::Surface { sampling, .. } => logging::GeometryContext::new(
@@ -683,6 +687,50 @@ mod tests {
         assert!(app.pending.is_none());
     }
     #[test]
+    fn manual_restore_becomes_latest_saved_plot_on_next_startup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.json");
+        let older = Snapshot::Curve {
+            equation: "x^2".into(),
+            sampling: CurveSampling {
+                extent: [3.0, 4.0],
+                samples: 128,
+            },
+        };
+        let newer = Snapshot::Helix {
+            helix: math_playground::scene::Helix {
+                radius: 2.0,
+                ..Default::default()
+            },
+        };
+        let mut history = Store::open(Some(path.clone()));
+        for snapshot in [&older, &newer] {
+            history.record(
+                snapshot.request(),
+                Outcome::Success {
+                    snapshot: snapshot.clone(),
+                },
+            );
+        }
+        let mut app = Playground::with_history(history);
+        finish_startup(&mut app);
+        assert_eq!(Snapshot::capture(&app.scene), newer);
+        app.restore_snapshot(older.clone());
+        finish_startup(&mut app);
+        assert_eq!(app.history.history.entries.len(), 3);
+        let saved = std::fs::read(&path).unwrap();
+        let mut reopened = Playground::with_history(Store::open(Some(path.clone())));
+        finish_startup(&mut reopened);
+        assert_eq!(Snapshot::capture(&reopened.scene), older);
+        assert_eq!(reopened.history.history.entries.len(), 3);
+        assert_eq!(
+            std::fs::read(path).unwrap(),
+            saved,
+            "startup must not write another entry"
+        );
+    }
+
+    #[test]
     fn startup_restores_newest_success_with_saved_sampling_without_recording() {
         let snapshots = [
             Snapshot::Helix {
@@ -1166,7 +1214,7 @@ mod tests {
     }
 
     #[test]
-    fn restored_curve_updates_input_mode_and_controls_without_adding_history() {
+    fn restored_curve_updates_input_mode_and_controls_and_records_history() {
         let mut app = Playground::default();
         let sampling = CurveSampling {
             extent: [3.0, 9.0],
@@ -1189,6 +1237,13 @@ mod tests {
         app.finish();
         assert_eq!(app.plot_mode, PlotMode::TwoD);
         assert_eq!(app.curve_sampling, sampling);
-        assert!(app.history.history.entries.is_empty());
+        assert_eq!(app.history.history.entries.len(), 1);
+        assert_eq!(
+            Snapshot::capture(&app.scene),
+            match &app.history.history.entries[0].outcome {
+                Outcome::Success { snapshot } => snapshot.clone(),
+                _ => panic!("restore must succeed"),
+            }
+        );
     }
 }
