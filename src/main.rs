@@ -21,6 +21,8 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use view::Camera;
 
 struct Playground {
+    about_open: bool,
+    about_icon: Option<egui::TextureHandle>,
     scene: Scene,
     camera: Camera,
     request: String,
@@ -53,6 +55,8 @@ struct Playground {
 impl Default for Playground {
     fn default() -> Self {
         Self {
+            about_open: false,
+            about_icon: None,
             scene: Scene::default(),
             camera: Camera::default(),
             request: "create a helix with five turns".into(),
@@ -370,6 +374,49 @@ impl Playground {
 }
 
 impl Playground {
+    fn about_ui(&mut self, ctx: &egui::Context) -> Option<egui::Rect> {
+        if !self.about_open {
+            return None;
+        }
+        let icon = self.about_icon.get_or_insert_with(|| {
+            let icon = image::load_from_memory(include_bytes!("../assets/icon/app-256.png"))
+                .expect("bundled icon")
+                .to_rgba8();
+            ctx.load_texture(
+                "about_icon",
+                egui::ColorImage::from_rgba_unmultiplied(
+                    [icon.width() as usize, icon.height() as usize],
+                    icon.as_raw(),
+                ),
+                egui::TextureOptions::LINEAR,
+            )
+        });
+        let mut close = false;
+        let response=egui::Modal::new(egui::Id::new("about_dialog")).show(ctx,|ui| {
+            ui.set_width((ctx.content_rect().width()-48.0).clamp(100.0,420.0));
+            ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
+            egui::ScrollArea::vertical().max_height((ctx.content_rect().height()-64.0).max(80.0)).show(ui,|ui| {
+                ui.image((icon.id(),egui::vec2(64.0,64.0)));
+                ui.heading("Mathematical playground");
+                ui.label("Explore mathematical curves, helices and implicit surfaces with interactive numerical plots.");
+                ui.label("Created by Matt Lee");
+                ui.label(format!("Version {}",math_playground::version::DISPLAY));
+                ui.hyperlink_to("View source on GitHub", "https://github.com/Warsinger/math-visualization");
+                ui.collapsing("Build details", |ui| {
+                    let info: serde_json::Value=serde_json::from_str(math_playground::version::JSON).expect("embedded build identity");
+                    for key in ["revision","channel","target","profile","dirty","rust"] {
+                        ui.label(format!("{key}: {}",info[key].as_str().map(str::to_owned).unwrap_or_else(||info[key].to_string())));
+                    }
+                    ui.small("Built with Rust and egui/eframe. Numerical approximations may miss features; plots are not mathematical proofs.");
+                });
+                close=ui.button("Close").clicked();
+            });
+        });
+        if close || response.should_close() {
+            self.about_open = false;
+        }
+        Some(response.response.rect)
+    }
     fn draw(&mut self, ui: &mut egui::Ui) -> (egui::Rect, Option<egui::Rect>) {
         self.finish();
         if self.pending.is_some() {
@@ -383,7 +430,10 @@ impl Playground {
           egui::ScrollArea::vertical().id_salt("workspace_scroll").show(ui, |ui| {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
             if compact { ui.spacing_mut().interact_size.y = 32.0; }
-            ui.heading("Mathematical playground");
+            ui.horizontal_wrapped(|ui| {
+                ui.heading("Mathematical playground");
+                if ui.button("About").clicked() { self.about_open = true; }
+            });
             ui.small(format!("Version {}", math_playground::version::DISPLAY));
             ui.label("Cartesian curves, helices and implicit surfaces.");
             ui.add_enabled_ui(self.pending.is_none(),|ui| {
@@ -589,6 +639,7 @@ impl Playground {
             }
           });
         });
+        self.about_ui(ui.ctx());
         (canvas_rect, history_rect)
     }
 }
@@ -691,6 +742,66 @@ mod tests {
         }
         assert!(app.pending.is_none());
     }
+    #[test]
+    fn about_fits_minimum_window_shows_identity_and_dismisses_with_escape() {
+        for size in [egui::vec2(320.0, 360.0), egui::vec2(1150.0, 760.0)] {
+            let ctx = egui::Context::default();
+            let mut app = Playground {
+                about_open: true,
+                ..Default::default()
+            };
+            let mut texts = String::new();
+            for _ in 0..3 {
+                let mut rect = None;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        rect = app.about_ui(ui.ctx());
+                    },
+                );
+                output.textures_delta.clear();
+                let rect = rect.unwrap();
+                assert!(
+                    rect.width() <= size.x && rect.height() <= size.y,
+                    "About exceeds viewport: {rect:?}"
+                );
+                texts = output
+                    .shapes
+                    .iter()
+                    .filter_map(|s| match &s.shape {
+                        egui::Shape::Text(t) => Some(t.galley.job.text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+            }
+            assert!(texts.contains("Created by Matt Lee"));
+            assert!(texts.contains(math_playground::version::DISPLAY));
+            assert!(texts.contains("View source on GitHub"));
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    events: vec![egui::Event::Key {
+                        key: egui::Key::Escape,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::default(),
+                    }],
+                    ..Default::default()
+                },
+                |ui| {
+                    app.about_ui(ui.ctx());
+                },
+            );
+            output.textures_delta.clear();
+            assert!(!app.about_open);
+        }
+    }
+
     #[test]
     fn manual_restore_becomes_latest_saved_plot_on_next_startup() {
         let dir = tempfile::tempdir().unwrap();

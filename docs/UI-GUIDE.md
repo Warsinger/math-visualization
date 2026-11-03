@@ -133,3 +133,7 @@ Drag the plot to pan a 2D curve or rotate a 3D plot. In narrow layouts, use the 
 On desktop startup and browser reload, the newest successful saved history entry becomes the initial plot, with its saved bounds/sampling and matching input mode. Failed requests are skipped; selection follows history order rather than timestamps. Startup restoration does not add an entry or write history. Empty, unavailable or unreadable history keeps the default helix. If rebuilding the saved snapshot fails, the error appears in plot feedback and the default remains available. Browser storage warnings remain visible separately. Camera and exploration controls are not part of history snapshots.
 
 Manual History Restore records its outcome as a new history entry after rebuilding, so a successfully restored older plot becomes the initial plot on the next startup/reload. Automatic startup restoration does not add entries or write history. Failed restores retain the active plot and do not replace the latest successful startup choice.
+
+## About
+
+Use About beside the application heading to view the bundled icon, description, Created by Matt Lee credit, version and GitHub source link. Build details expand to show the compiled revision, channel, target, profile, dirty state and Rust compiler. The dialog scrolls in small windows. Close, Escape or clicking its backdrop dismisses it. Its contents require no network access; only following the source link opens the browser. About does not change the plot or saved history.

@@ -7,6 +7,7 @@ description = "A small Rust playground for exploring mathematical curves"
 publish = false
 
 [dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 web-time = "1"

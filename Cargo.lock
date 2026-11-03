@@ -1230,6 +1230,7 @@ dependencies = [
  "chrono",
  "directories",
  "eframe",
+ "image",
  "rolling-file",
  "serde",
  "serde_json",
