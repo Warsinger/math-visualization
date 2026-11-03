@@ -504,9 +504,9 @@ impl Playground {
                 }
             });
         }
-        if let Some(id) = select {
+        let selection_changed = select.is_some_and(|id| id != workspace.selected);
+        if let Some(id) = select.filter(|_| selection_changed) {
             workspace.selected = id;
-            changed = true;
         }
         if let Some(id) = remove {
             workspace.remove(id);
@@ -523,7 +523,7 @@ impl Playground {
             changed = true;
         }
         ui.small("Up to 8 equations. Bounds and sampling apply to all rows.");
-        if changed {
+        if changed || selection_changed {
             self.request = workspace.selected().draft.clone();
             self.scene.sync_workspace();
             self.error = self
@@ -543,7 +543,9 @@ impl Playground {
                 .error
                 .clone()
                 .unwrap_or_else(|| "2D workspace updated. Apply edits to the selected row.".into());
-            self.record_workspace();
+            if changed {
+                self.record_workspace();
+            }
         }
         ui.separator();
     }
@@ -931,6 +933,61 @@ mod tests {
             std::thread::yield_now();
         }
         assert!(app.pending.is_none());
+    }
+    #[test]
+    fn clicking_equation_rows_selects_without_adding_history() {
+        let mut app = Playground::default();
+        app.scene
+            .plot_curve("x^2", CurveSampling::default())
+            .unwrap();
+        let w = app.scene.workspace.as_mut().unwrap();
+        let first = w.selected;
+        w.add().unwrap();
+        w.apply("sin(x)").unwrap();
+        app.scene.sync_workspace();
+        app.record_workspace();
+        let entries = app.history.history.entries.len();
+        let ctx = egui::Context::default();
+        let mut point = egui::Pos2::ZERO;
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.equations_ui(ui));
+            output.textures_delta.clear();
+            point = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(t) if t.galley.job.text == "x^2" => {
+                        Some(t.pos + egui::vec2(5.0, 5.0))
+                    }
+                    _ => None,
+                })
+                .expect("first equation is selectable");
+        }
+        // Select a different equation, then click that same selected row again.
+        for _ in 0..2 {
+            for pressed in [true, false] {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        events: vec![
+                            egui::Event::PointerMoved(point),
+                            egui::Event::PointerButton {
+                                pos: point,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: egui::Modifiers::default(),
+                            },
+                        ],
+                        ..Default::default()
+                    },
+                    |ui| app.equations_ui(ui),
+                );
+                output.textures_delta.clear();
+            }
+            assert_eq!(app.scene.workspace.as_ref().unwrap().selected, first);
+            assert_eq!(app.request, "x^2");
+            assert_eq!(app.scene.curve.as_ref().unwrap().source, "x^2");
+            assert_eq!(app.history.history.entries.len(), entries);
+        }
     }
     #[test]
     fn workspace_startup_and_failed_worker_preserve_rows_and_saved_selection() {
