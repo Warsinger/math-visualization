@@ -629,6 +629,7 @@ impl Playground {
                     self.scene.workspace = Some(workspace);
                 }
                 self.scene.sync_workspace();
+                self.curve_sampling = self.scene.workspace.as_ref().unwrap().sampling;
                 self.plot_mode = PlotMode::TwoD;
                 self.request = self
                     .scene
@@ -1156,6 +1157,87 @@ mod tests {
             std::thread::yield_now();
         }
         assert!(app.pending.is_none());
+    }
+    #[test]
+    fn returning_to_2d_reloads_its_complete_sampling_controls() {
+        let applied = CurveSampling {
+            extent: [2.0, 4.0],
+            samples: 256,
+        };
+        let mut app = Playground::default();
+        app.scene.plot_curve("x^2", applied).unwrap();
+        app.curve_sampling = CurveSampling {
+            extent: [7.0, 8.0],
+            ..applied
+        };
+        app.scene.enable_spatial_workspace().unwrap();
+        app.scene
+            .spatial_workspace
+            .as_mut()
+            .unwrap()
+            .rebuild_spatial(Sampling::default(), 4096)
+            .unwrap();
+        app.scene.sync_spatial_workspace();
+        app.sync_spatial_editor();
+        assert_eq!(app.curve_sampling.samples, 4096);
+        let ctx = egui::Context::default();
+        let mut point = egui::Pos2::ZERO;
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(Default::default(), |ui| app.equations_ui(ui));
+            output.textures_delta.clear();
+            point = output
+                .shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    egui::Shape::Text(t) if t.galley.job.text == "Return to 2D workspace" => {
+                        Some(t.pos + egui::vec2(8.0, 6.0))
+                    }
+                    _ => None,
+                })
+                .expect("return button");
+        }
+        for pressed in [true, false] {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events: vec![
+                        egui::Event::PointerMoved(point),
+                        egui::Event::PointerButton {
+                            pos: point,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ui| app.equations_ui(ui),
+            );
+            output.textures_delta.clear();
+        }
+        assert!(app.scene.curve.is_some());
+        assert_eq!(app.curve_sampling, applied);
+        assert_eq!(app.scene.workspace.as_ref().unwrap().sampling, applied);
+        assert_eq!(
+            app.scene
+                .spatial_workspace
+                .as_ref()
+                .unwrap()
+                .sampling
+                .samples,
+            4096
+        );
+        // Editing bounds after returning must retain the 2D resolution.
+        let settings = CurveSampling {
+            extent: [3.0, 5.0],
+            ..app.curve_sampling
+        };
+        app.start(move |scene| {
+            scene.workspace.as_mut().unwrap().rebuild(settings)?;
+            scene.sync_workspace();
+            Ok(())
+        });
+        finish_startup(&mut app);
+        assert_eq!(app.scene.workspace.as_ref().unwrap().sampling.samples, 256);
     }
     #[test]
     fn spatial_startup_selection_and_failed_edit_preserve_workspace() {
