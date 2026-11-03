@@ -48,10 +48,9 @@ pub fn launch() {
                 eframe::WebOptions::default(),
                 Box::new(|cc| {
                     cc.egui_ctx.set_theme(eframe::egui::ThemePreference::Dark);
-                    Ok(Box::new(super::Playground {
-                        history: math_playground::history::Store::browser(Box::new(LocalHistory)),
-                        ..Default::default()
-                    }))
+                    Ok(Box::new(super::Playground::with_history(
+                        math_playground::history::Store::browser(Box::new(LocalHistory)),
+                    )))
                 }),
             )
             .await;

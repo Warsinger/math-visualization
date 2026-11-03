@@ -85,6 +85,26 @@ impl Default for Playground {
 }
 
 impl Playground {
+    /// Start from the newest successful snapshot, without recording a new request.
+    fn with_history(history: Store) -> Self {
+        let latest = history
+            .history
+            .entries
+            .iter()
+            .rev()
+            .find_map(|entry| match &entry.outcome {
+                Outcome::Success { snapshot } => Some(snapshot.clone()),
+                Outcome::Error { .. } => None,
+            });
+        let mut app = Self {
+            history,
+            ..Default::default()
+        };
+        if let Some(snapshot) = latest {
+            app.restore_snapshot(snapshot);
+        }
+        app
+    }
     fn restore_snapshot(&mut self, snapshot: Snapshot) {
         self.plot_mode = if matches!(snapshot, Snapshot::Curve { .. }) {
             PlotMode::TwoD
@@ -637,11 +657,10 @@ fn run(simulate_error: bool) -> eframe::Result {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
             let saved_layout = layout::Layout::load(cc.storage);
             Ok(Box::new(Playground {
-                history: Store::local(),
                 history_open: saved_layout.history_open,
                 history_width: saved_layout.history_width,
                 axis_markers: saved_layout.axis_markers,
-                ..Default::default()
+                ..Playground::with_history(Store::local())
             }))
         }),
     )
@@ -655,6 +674,125 @@ fn main() {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    fn finish_startup(app: &mut Playground) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.pending.is_some() && std::time::Instant::now() < deadline {
+            app.finish();
+            std::thread::yield_now();
+        }
+        assert!(app.pending.is_none());
+    }
+    #[test]
+    fn startup_restores_newest_success_with_saved_sampling_without_recording() {
+        let snapshots = [
+            Snapshot::Helix {
+                helix: math_playground::scene::Helix {
+                    radius: 2.0,
+                    height: 6.0,
+                    turns: 3.0,
+                },
+            },
+            Snapshot::Curve {
+                equation: "x^2".into(),
+                sampling: CurveSampling {
+                    extent: [3.0, 4.0],
+                    samples: 128,
+                },
+            },
+            Snapshot::Surface {
+                equation: "x^2+y^2+z^2=1".into(),
+                sampling: Sampling {
+                    extent: [2.0, 3.0, 4.0],
+                    resolution: 12,
+                },
+            },
+        ];
+        for snapshot in snapshots {
+            let mut history = Store::session();
+            history.history.record(
+                "older".into(),
+                Outcome::Success {
+                    snapshot: Snapshot::capture(&Scene::default()),
+                },
+            );
+            history.history.record(
+                "latest success".into(),
+                Outcome::Success {
+                    snapshot: snapshot.clone(),
+                },
+            );
+            history.history.record(
+                "failed request".into(),
+                Outcome::Error {
+                    message: "bad".into(),
+                },
+            );
+            let original = history.history.entries.clone();
+            let mut app = Playground::with_history(history);
+            finish_startup(&mut app);
+            assert!(!app.error);
+            assert_eq!(Snapshot::capture(&app.scene), snapshot);
+            assert_eq!(app.request, snapshot.request());
+            assert_eq!(app.history.history.entries, original);
+            assert!(app.pending_history_request.is_none());
+            match snapshot {
+                Snapshot::Curve { sampling, .. } => {
+                    assert_eq!(app.plot_mode, PlotMode::TwoD);
+                    assert_eq!(app.curve_sampling, sampling);
+                }
+                Snapshot::Surface { sampling, .. } => {
+                    assert_eq!(app.plot_mode, PlotMode::ThreeD);
+                    assert_eq!(app.sampling, sampling);
+                }
+                _ => assert_eq!(app.plot_mode, PlotMode::ThreeD),
+            }
+        }
+    }
+    #[test]
+    fn startup_defaults_for_empty_failed_or_unreadable_history_and_keeps_restore_errors_nonfatal() {
+        let mut failed = Store::session();
+        failed.history.record(
+            "bad".into(),
+            Outcome::Error {
+                message: "error".into(),
+            },
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.json");
+        std::fs::write(&path, "broken").unwrap();
+        for history in [Store::session(), failed, Store::open(Some(path.clone()))] {
+            let warning = history.warning.clone();
+            let app = Playground::with_history(history);
+            assert!(app.pending.is_none());
+            assert_eq!(
+                Snapshot::capture(&app.scene),
+                Snapshot::capture(&Scene::default())
+            );
+            assert_eq!(app.history.warning, warning);
+        }
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "broken");
+        let mut history = Store::session();
+        history.history.record(
+            "invalid".into(),
+            Outcome::Success {
+                snapshot: Snapshot::Helix {
+                    helix: math_playground::scene::Helix {
+                        radius: -1.0,
+                        ..Default::default()
+                    },
+                },
+            },
+        );
+        let mut app = Playground::with_history(history);
+        finish_startup(&mut app);
+        assert!(app.error);
+        assert_eq!(
+            Snapshot::capture(&app.scene),
+            Snapshot::capture(&Scene::default())
+        );
+        assert_eq!(app.history.history.entries.len(), 1);
+    }
+
     #[test]
     fn wheel_gestures_have_one_owner_in_short_desktop_and_compact_layouts() {
         for width in [1150.0, 390.0] {
