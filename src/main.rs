@@ -16,10 +16,55 @@ use math_playground::{
     geometry::Sampling,
     history::{Outcome, Snapshot, Store, truncate},
     scene::{PlotMode, Scene},
-    workspace::PlotKind,
+    workspace::{PlotKind, SavedPlot},
 };
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use view::Camera;
+
+fn history_import_actions(
+    ui: &mut egui::Ui,
+    scene: &Scene,
+    snapshot: &Snapshot,
+    index: usize,
+) -> Option<SavedPlot> {
+    let mut chosen = None;
+    let workspace = matches!(
+        snapshot,
+        Snapshot::Workspace { .. } | Snapshot::SpatialWorkspace { .. }
+    );
+    let mut actions = |ui: &mut egui::Ui| {
+        for (object_index, saved) in snapshot.import_objects().into_iter().enumerate() {
+            ui.push_id(("history_import", index, object_index), |ui| {
+                if workspace {
+                    ui.label(saved.label());
+                }
+                let reason = scene.import_unavailable(&saved);
+                let caption = if scene.curve.is_none() && saved.object == PlotKind::Curve {
+                    "Add as XY curve (z=0)"
+                } else {
+                    "Add to current workspace"
+                };
+                if ui
+                    .add_enabled(reason.is_none(), egui::Button::new(caption))
+                    .clicked()
+                {
+                    chosen = Some(saved);
+                }
+                if let Some(reason) = reason {
+                    ui.small(reason);
+                }
+            });
+        }
+    };
+    if workspace {
+        egui::CollapsingHeader::new("Add an object to current workspace")
+            .id_salt(("import_objects", index))
+            .show(ui, actions);
+    } else {
+        actions(ui);
+    }
+    chosen
+}
 
 struct Playground {
     about_open: bool,
@@ -38,6 +83,7 @@ struct Playground {
     #[cfg(not(target_arch = "wasm32"))]
     layout_checked: bool,
     pending_history_request: Option<String>,
+    pending_import_controls: Option<(Sampling, CurveSampling)>,
     #[cfg(not(target_arch = "wasm32"))]
     pending_diagnostics: Option<logging::GeometryContext>,
     plot_mode: PlotMode,
@@ -72,6 +118,7 @@ impl Default for Playground {
             #[cfg(not(target_arch = "wasm32"))]
             layout_checked: false,
             pending_history_request: None,
+            pending_import_controls: None,
             #[cfg(not(target_arch = "wasm32"))]
             pending_diagnostics: None,
             plot_mode: PlotMode::Auto,
@@ -90,6 +137,37 @@ impl Default for Playground {
 }
 
 impl Playground {
+    fn import_from_history(&mut self, saved: SavedPlot) {
+        if self.pending.is_some() {
+            return;
+        }
+        if let Some(reason) = self.scene.import_unavailable(&saved) {
+            self.error = true;
+            self.feedback = reason;
+            return;
+        }
+        let controls = (self.sampling, self.curve_sampling);
+        let legacy_editor =
+            (self.scene.curve.is_none() && !self.scene.spatial_active()).then(|| {
+                (
+                    self.request.clone(),
+                    self.error.then(|| self.feedback.clone()),
+                )
+            });
+        self.pending_history_request = Some(format!("Add from history: {}", saved.label()));
+        self.start(move |scene| {
+            scene.import_saved(&saved)?;
+            if let Some((draft, error)) = legacy_editor {
+                let original = &mut scene.spatial_workspace.as_mut().unwrap().plots[0];
+                original.draft = draft;
+                original.error = error;
+            }
+            Ok(())
+        });
+        // Restore unfinished sampling controls after the result is applied;
+        // geometry uses the destination's applied settings, not these drafts.
+        self.pending_import_controls = Some(controls);
+    }
     /// Start from the newest successful snapshot, without recording a new request.
     fn with_history(history: Store) -> Self {
         let latest = history
@@ -152,6 +230,7 @@ impl Playground {
         }
     }
     fn start(&mut self, work: impl FnOnce(&mut Scene) -> Result<(), String> + Send + 'static) {
+        self.pending_import_controls = None;
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.pending_diagnostics = Some(logging::GeometryContext::new(
@@ -265,12 +344,13 @@ impl Playground {
                         if let Some(context) = &self.pending_diagnostics {
                             context.rejected(&error);
                         }
-                        if self.scene.curve.is_some()
+                        if self.pending_import_controls.is_none()
+                            && self.scene.curve.is_some()
                             && let Some(workspace) = &mut self.scene.workspace
                         {
                             workspace.selected_mut().error = Some(error.clone());
                         }
-                        if self.scene.spatial_active() {
+                        if self.pending_import_controls.is_none() && self.scene.spatial_active() {
                             self.scene
                                 .spatial_workspace
                                 .as_mut()
@@ -297,6 +377,12 @@ impl Playground {
         #[cfg(not(target_arch = "wasm32"))]
         if self.pending.is_none() {
             self.pending_diagnostics = None;
+        }
+        if self.pending.is_none()
+            && let Some((sampling, curves)) = self.pending_import_controls.take()
+        {
+            self.sampling = sampling;
+            self.curve_sampling = curves;
         }
         if self.pending.is_none()
             && let Some(request) = self.pending_history_request.take()
@@ -335,6 +421,7 @@ impl Playground {
     fn history_contents(&mut self, ui: &mut egui::Ui) {
         let mut restore = None;
         let mut retry = None;
+        let mut import = None;
 
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
         ui.horizontal(|ui| {
@@ -347,6 +434,7 @@ impl Playground {
         #[cfg(target_arch = "wasm32")]
         ui.small("Browser-local history: saved on changes on this origin only; may be cleared by your browser. Tabs do not live-sync; the last successful save wins. Clear saves an empty history unless saving is disabled (see warning).");
         ui.small("Restore replaces the workspace using saved plot settings. Edit/retry fills the input; current settings apply when submitted.");
+        ui.small("Add keeps current plots, bounds and sampling. Added objects are visible and selected; duplicates are allowed. Curves added to 3D lie at z=0.");
         if let Some(path) = &self.history.path {
             ui.label(format!("Storage: {}", path.display()));
         }
@@ -370,7 +458,9 @@ impl Playground {
             egui::ScrollArea::vertical()
                 .max_height(ui.available_height())
                 .show(ui, |ui| {
-                    for entry in self.history.history.entries.iter().rev() {
+                    for (history_index, entry) in
+                        self.history.history.entries.iter().enumerate().rev()
+                    {
                         ui.separator();
                         let date = chrono::DateTime::from_timestamp(entry.timestamp as i64, 0)
                             .map(|d| d.format("%Y-%m-%d %H:%M:%S UTC").to_string())
@@ -422,6 +512,11 @@ impl Playground {
                                         }
                                     }
                                 });
+                                if let Some(saved) =
+                                    history_import_actions(ui, &self.scene, snapshot, history_index)
+                                {
+                                    import = Some(saved);
+                                }
                             }
                             Outcome::Error { message } => {
                                 ui.colored_label(
@@ -441,6 +536,9 @@ impl Playground {
         }
         if let Some(snapshot) = restore {
             self.restore_snapshot(snapshot);
+        }
+        if let Some(saved) = import {
+            self.import_from_history(saved);
         }
     }
 }
@@ -1157,6 +1255,136 @@ mod tests {
             std::thread::yield_now();
         }
         assert!(app.pending.is_none());
+    }
+    #[test]
+    fn history_add_click_imports_applied_source_once_and_preserves_destination_edits() {
+        let applied = CurveSampling {
+            extent: [2.0, 3.0],
+            samples: 128,
+        };
+        let drafts = CurveSampling {
+            extent: [7.0, 8.0],
+            samples: 4096,
+        };
+        let mut app = Playground::default();
+        app.scene.plot_curve("x^2", applied).unwrap();
+        app.scene.workspace.as_mut().unwrap().selected_mut().draft = "unfinished(".into();
+        app.request = "unfinished(".into();
+        app.curve_sampling = drafts;
+        app.camera.zoom = 1.7;
+        app.camera.pan = [2.0, 3.0];
+        let source = Snapshot::Curve {
+            equation: "sin(x)".into(),
+            sampling: CurveSampling::default(),
+        };
+        app.history.record(
+            "summary text is not an equation".into(),
+            Outcome::Success { snapshot: source },
+        );
+        let ctx = egui::Context::default();
+        let mut point = egui::Pos2::ZERO;
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(Default::default(), |ui| app.history_contents(ui));
+            output.textures_delta.clear();
+            point = output
+                .shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    egui::Shape::Text(t) if t.galley.job.text == "Add to current workspace" => {
+                        Some(t.pos + egui::vec2(8.0, 6.0))
+                    }
+                    _ => None,
+                })
+                .expect("history import button");
+            assert_eq!(app.history.history.entries.len(), 1);
+        }
+        for pressed in [true, false] {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events: vec![
+                        egui::Event::PointerMoved(point),
+                        egui::Event::PointerButton {
+                            pos: point,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ui| app.history_contents(ui),
+            );
+            output.textures_delta.clear();
+        }
+        finish_startup(&mut app);
+        assert!(!app.error);
+        let w = app.scene.workspace.as_ref().unwrap();
+        assert_eq!(w.plots.len(), 2);
+        assert_eq!(w.selected().source, "sin(x)");
+        assert_eq!(w.plots[0].draft, "unfinished(");
+        assert_eq!(w.sampling, applied);
+        assert_eq!(app.curve_sampling, drafts);
+        assert_eq!(app.camera.zoom, 1.7);
+        assert_eq!(app.camera.pan, [2.0, 3.0]);
+        assert_eq!(app.history.history.entries.len(), 2);
+        app.finish();
+        assert_eq!(app.history.history.entries.len(), 2);
+        let saved = Snapshot::capture(&app.scene);
+        let mut reopened = Playground::with_history(app.history);
+        finish_startup(&mut reopened);
+        assert_eq!(Snapshot::capture(&reopened.scene), saved);
+        assert_eq!(reopened.history.history.entries.len(), 2);
+    }
+    #[test]
+    fn failed_import_preserves_existing_row_errors_and_records_only_attempted_rebuilds() {
+        let mut app = Playground::default();
+        app.scene.plot_curve("x", CurveSampling::default()).unwrap();
+        let old = app.scene.workspace.as_mut().unwrap().selected_mut();
+        old.draft = "unfinished(".into();
+        old.error = Some("previous error".into());
+        let before = old.clone();
+        app.import_from_history(SavedPlot {
+            object: PlotKind::Surface,
+            source: "z=0".into(),
+        });
+        assert!(app.pending.is_none());
+        assert!(app.history.history.entries.is_empty());
+        app.import_from_history(SavedPlot {
+            object: PlotKind::Curve,
+            source: "0=0".into(),
+        });
+        finish_startup(&mut app);
+        assert!(app.error);
+        let w = app.scene.workspace.as_ref().unwrap();
+        assert_eq!(w.plots.len(), 1);
+        assert_eq!(w.selected(), &before);
+        assert_eq!(w.selected().draft, before.draft);
+        assert_eq!(w.selected().error, before.error);
+        assert_eq!(w.selected().geometry.lines, before.geometry.lines);
+        assert_eq!(app.history.history.entries.len(), 1);
+        assert!(matches!(
+            app.history.history.entries[0].outcome,
+            Outcome::Error { .. }
+        ));
+    }
+    #[test]
+    fn import_into_legacy_3d_plot_keeps_its_unfinished_editor_text() {
+        let mut app = Playground {
+            request: "set radius to 3".into(),
+            ..Default::default()
+        };
+        let before = app.scene.geometry.lines.clone();
+        app.import_from_history(SavedPlot {
+            object: PlotKind::Surface,
+            source: "z=0".into(),
+        });
+        finish_startup(&mut app);
+        let w = app.scene.spatial_workspace.as_ref().unwrap();
+        assert_eq!(w.plots.len(), 2);
+        assert_eq!(w.plots[0].draft, "set radius to 3");
+        assert_eq!(w.plots[0].geometry.lines, before);
+        assert!(matches!(w.plots[0].object,PlotKind::Helix {parameters} if parameters.radius==1.0));
+        assert_eq!(w.selected().source, "z=0");
     }
     #[test]
     fn returning_to_2d_reloads_its_complete_sampling_controls() {

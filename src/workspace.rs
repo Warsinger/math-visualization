@@ -30,6 +30,43 @@ pub enum PlotKind {
     },
 }
 
+/// Applied configuration copied from history, without source IDs, styles or caches.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SavedPlot {
+    pub object: PlotKind,
+    pub source: String,
+}
+
+impl SavedPlot {
+    pub fn request(&self) -> String {
+        match self.object {
+            PlotKind::Helix { parameters: h } => format!(
+                "create a helix with radius {} and height {} and turns {}",
+                h.radius, h.height, h.turns
+            ),
+            _ => self.source.clone(),
+        }
+    }
+    pub fn label(&self) -> String {
+        match self.object {
+            PlotKind::Helix { parameters: h } => {
+                format!("Helix r={} h={} turns={}", h.radius, h.height, h.turns)
+            }
+            PlotKind::Surface => format!("Surface: {}", self.source),
+            PlotKind::Curve => format!("Curve: {}", self.source),
+        }
+    }
+    pub fn unavailable(&self, spatial: bool) -> Option<String> {
+        if !spatial && self.object != PlotKind::Curve {
+            Some("Surfaces and helices can only be added to a 3D workspace.".into())
+        } else if self.source.trim().is_empty() && !matches!(self.object, PlotKind::Helix { .. }) {
+            Some("This is a blank row with no applied equation to add.".into())
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Plot {
     #[serde(default)]
@@ -56,6 +93,17 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    pub fn import(&mut self, saved: &SavedPlot) -> Result<(), String> {
+        self.validate()?;
+        if let Some(reason) = saved.unavailable(self.spatial.is_some()) {
+            return Err(reason);
+        }
+        let mut candidate = self.clone();
+        candidate.add()?;
+        candidate.change_object(saved.object, &saved.request())?;
+        *self = candidate;
+        Ok(())
+    }
     pub fn single(source: &str, sampling: CurveSampling) -> Result<Self, String> {
         let mut workspace = Self {
             spatial: None,
@@ -327,6 +375,107 @@ impl PartialEq for Plot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn imports_use_destination_settings_fresh_styles_and_keep_existing_drafts() {
+        let settings = CurveSampling {
+            extent: [2.0, 3.0],
+            samples: 128,
+        };
+        let mut w = Workspace::single("x^2", settings).unwrap();
+        w.selected_mut().visible = false;
+        w.selected_mut().draft = "unfinished(".into();
+        w.selected_mut().error = Some("old error".into());
+        let original = w.selected().clone();
+        let saved = SavedPlot {
+            object: PlotKind::Curve,
+            source: "x^2+y^2=1".into(),
+        };
+        w.import(&saved).unwrap();
+        assert_eq!(w.sampling, settings);
+        assert_eq!(w.plots[0], original);
+        assert_eq!(w.plots[0].draft, original.draft);
+        assert_eq!(w.plots[0].error, original.error);
+        assert_eq!(w.plots[0].geometry.lines, original.geometry.lines);
+        assert_ne!(w.selected().id, original.id);
+        assert_ne!(w.selected().color, original.color);
+        assert!(w.selected().visible);
+        assert_eq!(
+            w.selected().geometry.lines,
+            curve::sample(&saved.source, settings).unwrap().lines
+        );
+        let id = w.selected;
+        w.import(&saved).unwrap(); // Duplicates are intentional independent objects.
+        assert_eq!(w.plots.len(), 3);
+        assert_ne!(id, w.selected);
+        assert_ne!(w.plots[1].color, w.selected().color);
+    }
+    #[test]
+    fn incompatible_empty_invalid_and_over_limit_imports_are_atomic() {
+        let mut w = Workspace::single("sin(x)", CurveSampling::default()).unwrap();
+        for saved in [
+            SavedPlot {
+                object: PlotKind::Surface,
+                source: "z=0".into(),
+            },
+            SavedPlot {
+                object: PlotKind::Helix {
+                    parameters: Helix::default(),
+                },
+                source: String::new(),
+            },
+            SavedPlot {
+                object: PlotKind::Curve,
+                source: String::new(),
+            },
+            SavedPlot {
+                object: PlotKind::Curve,
+                source: "bad(".into(),
+            },
+        ] {
+            let before = w.clone();
+            assert!(w.import(&saved).is_err());
+            assert_eq!(w, before);
+            assert_eq!(
+                w.selected().geometry.lines,
+                before.selected().geometry.lines
+            );
+        }
+        while w.plots.len() < MAX_PLOTS {
+            w.add().unwrap();
+        }
+        let before = w.clone();
+        assert!(
+            w.import(&SavedPlot {
+                object: PlotKind::Curve,
+                source: "x".into()
+            })
+            .is_err()
+        );
+        assert_eq!(w, before);
+        let mut spatial = Workspace::spatial_single(
+            PlotKind::Surface,
+            "z=0",
+            Sampling {
+                resolution: 8,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        spatial.selected_mut().visible = false;
+        spatial.selected_mut().geometry.lines = vec![[[0.0; 3]; 2]; MAX_SPATIAL_LINES];
+        let before = spatial.clone();
+        assert!(
+            spatial
+                .import(&SavedPlot {
+                    object: PlotKind::Surface,
+                    source: "x=0".into()
+                })
+                .unwrap_err()
+                .contains("300,000")
+        );
+        assert_eq!(spatial, before);
+        assert_eq!(spatial.selected().geometry.lines.len(), MAX_SPATIAL_LINES);
+    }
     #[test]
     fn spatial_objects_share_bounds_and_rebuild_without_losing_drafts() {
         let settings = Sampling {
