@@ -106,6 +106,50 @@ impl Default for Scene {
 }
 
 impl Scene {
+    pub fn import_unavailable(&self, saved: &crate::workspace::SavedPlot) -> Option<String> {
+        saved.unavailable(self.curve.is_none()).or_else(|| {
+            let workspace = if self.curve.is_some() {
+                self.workspace.as_ref()
+            } else {
+                self.spatial_workspace.as_ref()
+            };
+            workspace.and_then(|w| {
+                if w.plots.len() >= crate::workspace::MAX_PLOTS {
+                    Some("The current workspace already has eight rows. Remove a row first.".into())
+                } else if w.plots.iter().any(|p| p.id == u64::MAX) {
+                    Some("The current workspace has reached its object identity limit.".into())
+                } else {
+                    None
+                }
+            })
+        })
+    }
+    pub fn import_saved(&mut self, saved: &crate::workspace::SavedPlot) -> Result<(), String> {
+        if let Some(reason) = self.import_unavailable(saved) {
+            return Err(reason);
+        }
+        let mut candidate = self.clone();
+        if let Some(curve) = &candidate.curve {
+            if candidate.workspace.is_none() {
+                candidate.workspace = Some(crate::workspace::Workspace::single(
+                    &curve.source,
+                    curve.sampling,
+                )?);
+            }
+            candidate.workspace.as_mut().unwrap().import(saved)?;
+            candidate.sync_workspace();
+        } else {
+            candidate.enable_spatial_workspace()?;
+            candidate
+                .spatial_workspace
+                .as_mut()
+                .unwrap()
+                .import(saved)?;
+            candidate.sync_spatial_workspace();
+        }
+        *self = candidate;
+        Ok(())
+    }
     pub fn replace(&mut self, helix: Helix) -> Result<(), String> {
         let helix = helix.validate()?;
         if let Some(workspace) = &mut self.spatial_workspace {

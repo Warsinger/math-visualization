@@ -557,3 +557,73 @@ fn spatial_workspace_mixed_objects_history_and_dimension_transitions() {
     assert!(scene.spatial_workspace.is_none());
     assert_eq!(Snapshot::capture(&scene), old);
 }
+
+#[test]
+fn history_objects_import_individually_with_explicit_xy_placement_and_saved_helix_parameters() {
+    use math_playground::{
+        curve::CurveSampling,
+        geometry::Sampling,
+        history::{History, Outcome, Snapshot},
+        workspace::PlotKind,
+    };
+    let destination = Sampling {
+        extent: [2.0, 4.0, 5.0],
+        resolution: 12,
+    };
+    let mut scene = Scene::default();
+    scene.plot("z=0", destination).unwrap();
+    let original = scene.geometry.lines.clone();
+    let source = Snapshot::Curve {
+        equation: "x^2+y^2=1".into(),
+        sampling: CurveSampling {
+            extent: [20.0; 2],
+            samples: 4096,
+        },
+    };
+    scene.import_saved(&source.import_objects()[0]).unwrap();
+    let w = scene.spatial_workspace.as_ref().unwrap();
+    assert_eq!(w.spatial, Some(destination));
+    assert_eq!(w.plots.len(), 2);
+    assert_eq!(w.plots[0].geometry.lines, original);
+    assert_eq!(w.selected().object, PlotKind::Curve);
+    assert!(
+        w.selected()
+            .geometry
+            .lines
+            .iter()
+            .flatten()
+            .all(|p| p[2] == 0.0)
+    );
+    let helix = Snapshot::Helix {
+        helix: Helix {
+            radius: 2.0,
+            height: 7.0,
+            turns: 3.0,
+        },
+    };
+    scene.import_saved(&helix.import_objects()[0]).unwrap();
+    assert_eq!(scene.helix.radius, 2.0);
+    let saved = Snapshot::capture(&scene);
+    let objects = saved.import_objects();
+    assert_eq!(objects.len(), 3);
+    let mut planar = Scene::default();
+    planar.plot_curve("x", CurveSampling::default()).unwrap();
+    assert!(planar.import_unavailable(&objects[0]).is_some());
+    planar.import_saved(&objects[1]).unwrap();
+    assert_eq!(planar.workspace.as_ref().unwrap().plots.len(), 2);
+    assert!(planar.import_unavailable(&objects[2]).is_some());
+    let mut history = History::default();
+    history.record(
+        saved.request(),
+        Outcome::Success {
+            snapshot: saved.clone(),
+        },
+    );
+    let decoded = History::decode(&serde_json::to_vec(&history).unwrap()).unwrap();
+    let Outcome::Success { snapshot } = &decoded.entries[0].outcome else {
+        panic!()
+    };
+    let mut restored = Scene::default();
+    snapshot.restore(&mut restored).unwrap();
+    assert_eq!(Snapshot::capture(&restored), saved);
+}

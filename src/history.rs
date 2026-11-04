@@ -38,6 +38,31 @@ pub enum Snapshot {
     },
 }
 impl Snapshot {
+    pub fn import_objects(&self) -> Vec<crate::workspace::SavedPlot> {
+        use crate::workspace::{PlotKind, SavedPlot};
+        match self {
+            Self::Workspace { workspace } | Self::SpatialWorkspace { workspace } => workspace
+                .plots
+                .iter()
+                .map(|p| SavedPlot {
+                    object: p.object,
+                    source: p.source.clone(),
+                })
+                .collect(),
+            Self::Curve { equation, .. } => vec![SavedPlot {
+                object: PlotKind::Curve,
+                source: equation.clone(),
+            }],
+            Self::Surface { equation, .. } => vec![SavedPlot {
+                object: PlotKind::Surface,
+                source: equation.clone(),
+            }],
+            Self::Helix { helix } => vec![SavedPlot {
+                object: PlotKind::Helix { parameters: *helix },
+                source: String::new(),
+            }],
+        }
+    }
     pub fn capture(scene: &Scene) -> Self {
         if scene.spatial_active() {
             let mut workspace = scene.spatial_workspace.as_ref().unwrap().clone();

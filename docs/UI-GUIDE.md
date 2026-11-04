@@ -48,6 +48,22 @@ The workspace is limited to eight objects, existing per-object sampling limits a
 
 History records object types, applied equations or helix parameters, colors, visibility, selected object and shared sampling; geometry, drafts and errors are rebuilt/transient. Both native startup and browser reload restore a saved 3D workspace. Previous 2D workspace and single-plot snapshots remain readable. Older app versions cannot read the new 3D snapshot kind and preserve unsupported history rather than overwrite it. Existing 200-entry/2 MB history budgets still apply. No curve/surface intersection solving or depth occlusion is added: screen-space overlaps are not evidence of world-space intersections.
 
+## Add saved plots from History
+
+Use **Add to current workspace** on a successful single-plot history entry to append it without replacing your current plots. For a saved workspace, expand **Add an object to current workspace** and choose the individual object to add. Imports are one object at a time. **Restore** still replaces the workspace, and **Edit/retry** retains its existing behavior.
+
+| Saved object | Current 2D workspace | Current 3D workspace |
+| --- | --- | --- |
+| 2D equation or XY curve | Add as a planar equation | **Add as XY curve (z=0)** |
+| Implicit surface | Unavailable | Add as a surface |
+| Helix | Unavailable | Add its saved radius, height and turns |
+
+Surfaces and helices cannot be projected into 2D through this action. A curve imported into 3D is explicitly an XY curve, so `y=x^2` does not become a cylinder. Failed requests and blank saved rows have no applied object to import. Incompatible objects and full workspaces display a reason instead of allowing an import.
+
+The destination retains its applied bounds/sampling, camera, existing objects, equation drafts, row errors and unfinished sampling controls. The imported object is rebuilt using destination settings, assigned a new destination identity and available color, and made visible and selected even if its saved row was hidden. Duplicate equations are allowed as independent rows. Existing blank rows count toward the eight-row limit. A legacy single 3D plot is retained as the first row when adding another object.
+
+Imports obey existing sampling and aggregate geometry limits, including hidden objects. Rebuilding happens through the existing worker path (synchronously in browser builds). Failure leaves the applied workspace and existing drafts/errors unchanged. A completed import adds exactly one successful workspace history entry; a failed rebuild records an error like other requests. Disabled actions, browsing history and expanding object choices add nothing. Startup/reload restores the latest successful resulting workspace. Imports use saved applied configuration, not request-summary text, cached geometry or unfinished historical drafts.
+
 ## Adjust sampling
 
 ![Implicit-surface controls with X, Y, Z half-extents of 3 and 24 cells per axis](images/implicit-surface-sampling-controls.png)
