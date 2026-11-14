@@ -7,6 +7,8 @@ mod logging;
 #[cfg(not(target_arch = "wasm32"))]
 mod startup;
 mod view;
+#[cfg(windows)]
+mod windows_alt_code;
 #[cfg(target_arch = "wasm32")]
 mod web;
 
@@ -67,6 +69,8 @@ fn history_import_actions(
 }
 
 struct Playground {
+    #[cfg(windows)]
+    alt_code: windows_alt_code::AltCodeInput,
     about_open: bool,
     about_icon: Option<egui::TextureHandle>,
     scene: Scene,
@@ -102,6 +106,8 @@ struct Playground {
 impl Default for Playground {
     fn default() -> Self {
         Self {
+            #[cfg(windows)]
+            alt_code: Default::default(),
             about_open: false,
             about_icon: None,
             scene: Scene::default(),
@@ -1159,6 +1165,14 @@ impl Playground {
 }
 
 impl eframe::App for Playground {
+    #[cfg(windows)]
+    fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        let committed = self.alt_code.take();
+        if input.focused && !committed.is_empty() && ctx.egui_wants_keyboard_input() {
+            input.events.push(egui::Event::Text(committed));
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         #[cfg(not(target_arch = "wasm32"))]
         if !self.layout_checked {
@@ -1211,7 +1225,11 @@ fn run(simulate_error: bool) -> eframe::Result {
             "Simulated startup failure requested with --simulate-startup-error. Remove this option to start normally.",
         ))));
     }
+    #[cfg(windows)]
+    let alt_code = windows_alt_code::AltCodeInput::default();
     let options = eframe::NativeOptions {
+        #[cfg(windows)]
+        event_loop_builder: Some(alt_code.hook()),
         persistence_path: layout::storage_path(),
         persist_window: true,
         window_builder: Some(Box::new(layout::sanitize_window)),
@@ -1231,6 +1249,8 @@ fn run(simulate_error: bool) -> eframe::Result {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
             let saved_layout = layout::Layout::load(cc.storage);
             Ok(Box::new(Playground {
+                #[cfg(windows)]
+                alt_code,
                 history_open: saved_layout.history_open,
                 history_width: saved_layout.history_width,
                 axis_markers: saved_layout.axis_markers,
