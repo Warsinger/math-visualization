@@ -21,12 +21,17 @@ impl Sequence {
         match message {
             WM_KEYDOWN | WM_SYSKEYDOWN if key == ALT && flags & EXTENDED == 0 => {
                 if flags & REPEAT == 0 {
-                    *self = Self { window, ..Self::default() };
+                    *self = Self {
+                        window,
+                        ..Self::default()
+                    };
                 }
             }
             WM_KEYDOWN | WM_SYSKEYDOWN => {
-                if self.window == window && !self.released
-                    && flags & ALT_CONTEXT != 0 && (0x60..=0x69).contains(&key)
+                if self.window == window
+                    && !self.released
+                    && flags & ALT_CONTEXT != 0
+                    && (0x60..=0x69).contains(&key)
                 {
                     self.digits = true;
                 } else {
@@ -40,7 +45,9 @@ impl Sequence {
                 let same_window = self.window == window;
                 *self = Self::default();
                 if same_window {
-                    return u32::try_from(key).ok().and_then(char::from_u32)
+                    return u32::try_from(key)
+                        .ok()
+                        .and_then(char::from_u32)
                         .filter(|ch| !ch.is_control());
                 }
             }
@@ -62,8 +69,13 @@ impl AltCodeInput {
                 // Winit supplies a valid MSG for the duration of the callback.
                 let message = unsafe { &*message.cast::<MSG>() };
                 let Some(ch) = sequence.observe(
-                    message.hwnd as usize, message.message, message.wParam, message.lParam,
-                ) else { return false };
+                    message.hwnd as usize,
+                    message.message,
+                    message.wParam,
+                    message.lParam,
+                ) else {
+                    return false;
+                };
                 let mut text = pending.borrow_mut();
                 if text.len() < 256 {
                     text.push(ch);

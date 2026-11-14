@@ -7,10 +7,10 @@ mod logging;
 #[cfg(not(target_arch = "wasm32"))]
 mod startup;
 mod view;
-#[cfg(windows)]
-mod windows_alt_code;
 #[cfg(target_arch = "wasm32")]
 mod web;
+#[cfg(windows)]
+mod windows_alt_code;
 
 use eframe::egui;
 use math_playground::{
