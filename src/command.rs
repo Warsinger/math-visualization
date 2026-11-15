@@ -16,11 +16,34 @@ fn number(word: &str) -> Option<f32> {
     }
 }
 
+fn normalize(text: &str) -> String {
+    text.trim().to_lowercase().replace([',', '='], " ")
+}
+
+const CREATE_PREFIX: [&str; 4] = ["create", "a", "helix", "with"];
+
+pub(crate) enum RequestKind {
+    Create,
+    Edit,
+}
+
+pub(crate) fn classify(text: &str) -> Option<RequestKind> {
+    let normalized = normalize(text);
+    let mut words = normalized.split_whitespace();
+    match words.next()? {
+        "set" => Some(RequestKind::Edit),
+        "create" if words.take(3).eq(CREATE_PREFIX[1..].iter().copied()) => {
+            Some(RequestKind::Create)
+        }
+        _ => None,
+    }
+}
+
 /// A deliberately small grammar, not an AI interpreter. No partial mutations.
 pub fn parse(text: &str, current: Helix) -> Result<Helix, String> {
-    let normalized = text.trim().to_lowercase().replace([',', '='], " ");
+    let normalized = normalize(text);
     let words: Vec<_> = normalized.split_whitespace().collect();
-    let (mut next, start) = if words.starts_with(&["create", "a", "helix", "with"]) {
+    let (mut next, start) = if words.starts_with(&CREATE_PREFIX) {
         (Helix::default(), 4)
     } else if words.starts_with(&["set"]) {
         (current, 1)

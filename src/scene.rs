@@ -340,17 +340,24 @@ impl Scene {
 
     pub fn request_in_mode(&mut self, text: &str, mode: PlotMode) -> Result<(), String> {
         let text = text.trim();
-        if mode == PlotMode::ThreeD
-            && !text.starts_with("plot ")
-            && !text.to_lowercase().starts_with("create ")
-            && !text.starts_with("set ")
-        {
+        if let Some(kind) = command::classify(text) {
+            if matches!(kind, command::RequestKind::Edit)
+                && (self.surface.is_some()
+                    || self.curve.is_some()
+                    || self.spatial_active()
+                        && !matches!(
+                            self.spatial_workspace.as_ref().unwrap().selected().object,
+                            crate::workspace::PlotKind::Helix { .. }
+                        ))
+            {
+                return Err("For this plot use a plot request or its sampling controls. Create a helix to use helix commands.".into());
+            }
+            return self.replace(command::parse(text, self.helix)?);
+        }
+        if mode == PlotMode::ThreeD && !text.starts_with("plot ") {
             return self.request_in_mode(&format!("plot {text}"), mode);
         }
-        if mode == PlotMode::Auto
-            && !text.to_lowercase().starts_with("create ")
-            && !text.starts_with("set ")
-        {
+        if mode == PlotMode::Auto {
             let source = text.strip_prefix("plot ").unwrap_or(text).trim();
             let mode = if self.spatial_active() || Equation::references_z(source)? {
                 PlotMode::ThreeD
@@ -359,10 +366,7 @@ impl Scene {
             };
             return self.request_in_mode(&format!("plot {source}"), mode);
         }
-        if mode == PlotMode::TwoD
-            && !text.to_lowercase().starts_with("create ")
-            && !text.starts_with("set ")
-        {
+        if mode == PlotMode::TwoD {
             let source = text.strip_prefix("plot ").unwrap_or(text).trim();
             let sampling = self.curve.as_ref().map_or_else(
                 || {
@@ -374,31 +378,17 @@ impl Scene {
             );
             return self.plot_curve(source, sampling);
         }
-        if let Some(source) = text.strip_prefix("plot ") {
-            let sampling = self.surface.as_ref().map_or_else(
-                || {
-                    self.spatial_workspace
-                        .as_ref()
-                        .and_then(|w| w.spatial)
-                        .unwrap_or_default()
-                },
-                |s| s.sampling,
-            );
-            self.plot(source.trim(), sampling)
-        } else {
-            if (self.surface.is_some()
-                || self.curve.is_some()
-                || self.spatial_active()
-                    && !matches!(
-                        self.spatial_workspace.as_ref().unwrap().selected().object,
-                        crate::workspace::PlotKind::Helix { .. }
-                    ))
-                && !text.to_lowercase().starts_with("create a helix with ")
-            {
-                return Err("For this plot use a plot request or its sampling controls. Create a helix to use helix commands.".into());
-            }
-            self.replace(command::parse(text, self.helix)?)
-        }
+        let source = text.strip_prefix("plot ").unwrap_or(text);
+        let sampling = self.surface.as_ref().map_or_else(
+            || {
+                self.spatial_workspace
+                    .as_ref()
+                    .and_then(|w| w.spatial)
+                    .unwrap_or_default()
+            },
+            |s| s.sampling,
+        );
+        self.plot(source.trim(), sampling)
     }
 }
 
@@ -434,5 +424,38 @@ mod tests {
                 .is_err()
         );
         assert_eq!(scene.helix, before);
+    }
+}
+
+#[cfg(test)]
+mod normalized_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn normalized_helix_commands_work_in_every_mode() {
+        for mode in [PlotMode::Auto, PlotMode::TwoD, PlotMode::ThreeD] {
+            let mut scene = Scene::default();
+            scene.request_in_mode(" SET\tradius=2 ", mode).unwrap();
+            assert_eq!(scene.helix.radius, 2.0);
+            for (equation, plot_mode) in
+                [("y=x^2", PlotMode::TwoD), ("z=x^2+y^2", PlotMode::ThreeD)]
+            {
+                scene.request_in_mode(equation, plot_mode).unwrap();
+                assert!(scene.request_in_mode(" SeT\tradius 3 ", mode).is_err());
+                assert_eq!(scene.helix.radius, 2.0);
+                assert!(scene.curve.is_some() || scene.surface.is_some());
+                assert!(
+                    scene
+                        .request_in_mode(" CrEaTe\ta HELIX with radius -1 ", mode)
+                        .is_err()
+                );
+                assert!(scene.curve.is_some() || scene.surface.is_some());
+                scene
+                    .request_in_mode(" CrEaTe\ta HELIX with radius 2 and five turns ", mode)
+                    .unwrap();
+                assert_eq!(scene.helix.turns, 5.0);
+                assert!(scene.curve.is_none() && scene.surface.is_none());
+            }
+        }
     }
 }
