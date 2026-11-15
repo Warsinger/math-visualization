@@ -935,7 +935,7 @@ impl Playground {
             (egui::Key::Num2, PlotMode::TwoD),
             (egui::Key::Num3, PlotMode::ThreeD),
         ] {
-            if pressed(key) {
+            if self.pending.is_none() && pressed(key) {
                 self.plot_mode = mode;
             }
         }
@@ -2290,6 +2290,15 @@ mod tests {
         assert!(!app.history_open);
         frame(&mut app, egui::Key::H, false, none, false);
         assert!(app.history_open);
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        app.pending = Some(receiver);
+        frame(&mut app, egui::Key::Num3, false, none, false);
+        assert_eq!(
+            app.plot_mode,
+            PlotMode::Auto,
+            "mode controls are disabled while geometry is pending"
+        );
+        app.pending = None;
         frame(&mut app, egui::Key::Num2, false, none, false);
         assert_eq!(app.plot_mode, PlotMode::TwoD);
         assert!(
