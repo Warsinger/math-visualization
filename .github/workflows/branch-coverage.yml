@@ -2,7 +2,7 @@ name: Nightly Rust branch coverage
 
 on:
   push:
-    branches: [main, codex/60-branch-coverage]
+    branches: [main]
   workflow_dispatch:
 
 permissions:

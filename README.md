@@ -125,7 +125,7 @@ is separate from stable coverage, and this workflow uses no shared coverage cach
 
 Download branch-coverage-linux-debug for the annotated HTML, raw LLVM JSON and
 Markdown summary with the producing commit and toolchain. A report without parser
-branch counters or uncovered outcomes fails validation. Counts represent only
+branch counters fails validation. Counts represent only
 branches LLVM instruments. They do not measure all combinations of boolean
 conditions, and compiler changes can change the denominator. Standalone tests
 and generated target paths are excluded from reports. Inline tests may count.

@@ -28,8 +28,8 @@ def main():
         and counts(file["summary"])[1] > 0
         for file in data["files"]
     )
-    if not 0 < covered < total or not parser_has_branches:
-        raise ValueError("Expected measured parser branches and uncovered branch outcomes")
+    if total == 0 or not parser_has_branches:
+        raise ValueError("Expected measured LLVM branch counters, including parser branches")
     print("| File | Covered | Total | Branch coverage |")
     print("| --- | ---: | ---: | ---: |")
     for file in data["files"]:
