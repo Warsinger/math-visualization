@@ -271,6 +271,8 @@ impl Playground {
                     Ok(scene) => {
                         #[cfg(not(target_arch = "wasm32"))]
                         tracing::info!(target: "math_playground", event = "geometry_updated", segments = scene.geometry.lines.len());
+                        #[cfg(target_arch = "wasm32")]
+                        web::diagnostic("geometry_updated", scene.geometry.lines.len());
                         self.scene = scene;
                         if self.plot_mode != PlotMode::Auto {
                             self.plot_mode = if self.scene.curve.is_some() {
@@ -350,6 +352,8 @@ impl Playground {
                         if let Some(context) = &self.pending_diagnostics {
                             context.rejected(&error);
                         }
+                        #[cfg(target_arch = "wasm32")]
+                        web::diagnostic("geometry_rejected", 0);
                         if self.pending_import_controls.is_none()
                             && self.scene.curve.is_some()
                             && let Some(workspace) = &mut self.scene.workspace
@@ -374,6 +378,8 @@ impl Playground {
                 if let Some(context) = &self.pending_diagnostics {
                     context.disconnected();
                 }
+                #[cfg(target_arch = "wasm32")]
+                web::diagnostic("geometry_worker_disconnected", 0);
                 self.pending = None;
                 self.error = true;
                 self.feedback = "Geometry worker stopped; previous scene preserved.".into();
