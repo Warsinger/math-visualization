@@ -32,3 +32,40 @@ test('frontend-only changes get a fresh runtime path and oversized files do not 
  fs.writeFileSync(path.join(root,'target/web-bindgen/math_playground_bg.wasm'),Buffer.alloc(25*1024*1024+1));await assert.rejects(prepareWeb(root),/25 MiB/);
  assert.equal(fs.readFileSync(path.join(next.output,'index.html'),'utf8'),validHTML);
 });
+
+test('browser diagnostics classify and deduplicate failures without logging request text', async t => {
+ const root = fixture(t);
+ const status = {dataset: {}};
+ const listeners = new Map();
+ const web = {addEventListener: (type, listener) => listeners.set(type, listener)};
+ const records = [];
+ const previous = {window: globalThis.window, document: globalThis.document};
+ const original = {info: console.info, warn: console.warn, error: console.error};
+ t.after(() => {
+   Object.assign(globalThis, previous);
+   Object.assign(console, original);
+ });
+ globalThis.window = web;
+ globalThis.document = {getElementById: () => status};
+ for (const level of ['info', 'warn', 'error']) console[level] = entry => records.push(entry);
+
+ const {relative, output} = await prepareWeb(root);
+ const {pathToFileURL} = await import('node:url');
+ await import(pathToFileURL(path.join(output, relative, 'app.mjs')).href);
+ web.appReady('ready');
+ web.mathDiagnostic('geometry_updated', 123);
+ web.mathDiagnostic('geometry_rejected', 'private equation');
+ listeners.get('unhandledrejection')({reason: Error('private equation')});
+ listeners.get('error')({message: 'duplicate'});
+ web.appReady('late');
+ assert.equal(status.dataset.state, 'runtime-error');
+ assert.deepEqual(records.map(({event, level}) => [event, level]), [
+   ['startup_started', 'info'], ['startup_ready', 'info'],
+   ['geometry_updated', 'info'], ['geometry_rejected', 'warn'],
+   ['runtime_failed', 'error'],
+ ]);
+ assert.equal(records[2].segments, 123);
+ assert.doesNotMatch(JSON.stringify(records), /private equation|duplicate/);
+ console.warn = () => { throw Error('console unavailable'); };
+ assert.doesNotThrow(() => web.mathDiagnostic('geometry_rejected'));
+});

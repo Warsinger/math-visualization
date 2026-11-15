@@ -7,6 +7,12 @@ extern "C" {
     fn browser_ready(message: &str);
     #[wasm_bindgen(js_namespace = window, js_name = appError)]
     fn browser_error(message: &str);
+    #[wasm_bindgen(catch, js_namespace = window, js_name = mathDiagnostic)]
+    fn browser_diagnostic(event: &str, segments: u32) -> Result<(), wasm_bindgen::JsValue>;
+}
+
+pub(crate) fn diagnostic(event: &str, segments: usize) {
+    let _ = browser_diagnostic(event, u32::try_from(segments).unwrap_or(u32::MAX));
 }
 
 const HISTORY_KEY: &str = "math-playground.history.v1";
@@ -58,8 +64,7 @@ pub fn launch() {
             Ok(()) => browser_ready(
                 "Browser app · browser-local history (see History for save status) · large plots may briefly pause interaction",
             ),
-            Err(error) => {
-                web_sys::console::error_1(&error);
+            Err(_) => {
                 browser_error(
                     "Startup failed: graphics initialization error. Check browser developer console.",
                 );

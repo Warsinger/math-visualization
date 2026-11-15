@@ -69,3 +69,18 @@ The page uses web-shared's full-height canvas layout, common footer and status/m
 The asset hash now includes the app bootstrap/CSS, shared modules/styles and generated Rust JS/Wasm together. Frontend-only changes get fresh immutable URLs. prepare-web tests cover that behavior and reject overlarge assets before replacing a valid output. verify-web checks the generated artifact and all paired assets; Pages lifecycle guards and the native app remain unchanged.
 
 Manual History Restore records its outcome as a new history entry after rebuilding, so a successfully restored older plot becomes the initial plot on the next startup/reload. Automatic startup restoration does not add entries or write history. Failed restores retain the active plot and do not replace the latest successful startup choice.
+
+## Browser diagnostics
+
+The developer console shows structured records with a UTC timestamp, severity,
+event name and browser platform. Use the console's standard severity filters.
+Startup and successful geometry updates use Info, rejected geometry uses Warning,
+and startup or runtime failures use Error. A fatal failure is reported once per
+page load, even when more than one browser error handler sees it. The app still
+shows its recovery message when diagnostic output fails.
+
+Records contain event names and, for successful geometry, a segment count.
+Equation, request, history and raw exception text are excluded. Diagnostics use
+the developer console only. The console can retain its own entries according to
+browser settings. A dedicated export was deferred because the console already
+supports local inspection and an export would introduce a separate retention UI.
