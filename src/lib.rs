@@ -3,6 +3,7 @@ pub mod command;
 pub mod curve;
 pub mod derivative;
 pub mod expression;
+pub mod formula;
 pub mod geometry;
 pub mod history;
 pub mod integral;
