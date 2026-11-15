@@ -913,8 +913,48 @@ impl Playground {
         }
         Some(response.response.rect)
     }
+    fn plot_shortcuts(&mut self, ctx: &egui::Context) {
+        if self.about_open || ctx.egui_wants_keyboard_input() {
+            return;
+        }
+        let pressed = |key| {
+            ctx.input(|input| {
+                input.focused
+                    && input.events.iter().any(|event| {
+                        matches!(event, egui::Event::Key {
+                        key: pressed, pressed: true, repeat: false, modifiers, ..
+                    } if *pressed == key && *modifiers == egui::Modifiers::NONE)
+                    })
+            })
+        };
+        if pressed(egui::Key::H) {
+            self.history_open = !self.history_open;
+        }
+        for (key, mode) in [
+            (egui::Key::Num1, PlotMode::Auto),
+            (egui::Key::Num2, PlotMode::TwoD),
+            (egui::Key::Num3, PlotMode::ThreeD),
+        ] {
+            if self.pending.is_none() && pressed(key) {
+                self.plot_mode = mode;
+            }
+        }
+        if pressed(egui::Key::T)
+            && self.scene.curve.as_ref().is_some_and(|curve| {
+                self.scene
+                    .workspace
+                    .as_ref()
+                    .is_none_or(|workspace| workspace.selected().visible)
+                    && math_playground::expression::Equation::explicit_y(&curve.source).is_ok()
+            })
+        {
+            self.tangent_enabled = !self.tangent_enabled;
+        }
+    }
+
     fn draw(&mut self, ui: &mut egui::Ui) -> (egui::Rect, Option<egui::Rect>) {
         self.finish();
+        self.plot_shortcuts(ui.ctx());
         if self.pending.is_some() {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(50));
@@ -935,9 +975,9 @@ impl Playground {
             ui.add_enabled_ui(self.pending.is_none(),|ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.label("Input mode:");
-                    ui.selectable_value(&mut self.plot_mode,PlotMode::Auto,"Auto");
-                    ui.selectable_value(&mut self.plot_mode,PlotMode::TwoD,"2D · XY");
-                    ui.selectable_value(&mut self.plot_mode,PlotMode::ThreeD,"3D · implicit");
+                    ui.selectable_value(&mut self.plot_mode,PlotMode::Auto,"Auto").on_hover_text("Shortcut: 1 when no control has keyboard focus");
+                    ui.selectable_value(&mut self.plot_mode,PlotMode::TwoD,"2D · XY").on_hover_text("Shortcut: 2 when no control has keyboard focus");
+                    ui.selectable_value(&mut self.plot_mode,PlotMode::ThreeD,"3D · implicit").on_hover_text("Shortcut: 3 when no control has keyboard focus");
                 });
                 ui.small(if self.scene.spatial_active() { "In a 3D workspace Auto keeps the selected object type. Use Add XY curve to place a curve at z=0; surfaces remain implicit. Choose 2D or return to its workspace for planar plotting." } else { "Auto: equations with z use 3D; otherwise 2D. Bare x^2 means y=x^2. Overrides apply on the next request. Helices are 3D." });
             });
@@ -966,7 +1006,7 @@ impl Playground {
             let color = if self.error { egui::Color32::LIGHT_RED } else { egui::Color32::LIGHT_GREEN };
             ui.colored_label(color, &self.feedback);
             ui.horizontal_wrapped(|ui| {
-                if ui.selectable_label(self.history_open,"History").clicked() { self.history_open = !self.history_open; }
+                if ui.selectable_label(self.history_open,"History").on_hover_text("Shortcut: H when no control has keyboard focus").clicked() { self.history_open = !self.history_open; }
                 ui.small(format!("{} entries",self.history.history.entries.len()));
                 ui.checkbox(&mut self.axis_markers,"Axis coordinates");
             });
@@ -1014,7 +1054,7 @@ impl Playground {
                                     else { scene.plot_curve(&source,settings) }
                                 });
                             }
-                            ui.checkbox(&mut self.tangent_enabled, "Explore tangent");
+                            ui.checkbox(&mut self.tangent_enabled, "Explore tangent").on_hover_text("Shortcut: T on an explicit 2D curve when no control has keyboard focus");
                             if self.tangent_enabled {
                                 if math_playground::expression::Equation::explicit_y(&source).is_ok() {
                                     ui.label("Hover along the curve to explore the tangent at the inspected point.");
@@ -2210,6 +2250,72 @@ mod tests {
         let error = run(true).unwrap_err().to_string();
         assert!(error.contains("Simulated startup failure"));
         assert!(error.contains("--simulate-startup-error"));
+    }
+
+    #[test]
+    fn shortcuts_respect_focus_modifiers_repeat_and_plot_context() {
+        let ctx = egui::Context::default();
+        let mut app = Playground::default();
+        let id = egui::Id::new("shortcut-test-editor");
+        let mut editor = String::new();
+        let mut frame = |app: &mut Playground, key, repeat, modifiers, edit| {
+            let event = |pressed| egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers,
+            };
+            let input = egui::RawInput {
+                events: if repeat {
+                    vec![event(true)]
+                } else {
+                    vec![event(false), event(true)]
+                },
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                if edit {
+                    ui.add(egui::TextEdit::singleline(&mut editor).id(id))
+                        .request_focus();
+                }
+                app.plot_shortcuts(ui.ctx());
+            });
+            output.textures_delta.clear();
+        };
+        let none = egui::Modifiers::NONE;
+        frame(&mut app, egui::Key::T, false, none, false);
+        assert!(!app.tangent_enabled);
+        frame(&mut app, egui::Key::H, false, egui::Modifiers::CTRL, false);
+        assert!(!app.history_open);
+        frame(&mut app, egui::Key::H, false, none, false);
+        assert!(app.history_open);
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        app.pending = Some(receiver);
+        frame(&mut app, egui::Key::Num3, false, none, false);
+        assert_eq!(
+            app.plot_mode,
+            PlotMode::Auto,
+            "mode controls are disabled while geometry is pending"
+        );
+        app.pending = None;
+        frame(&mut app, egui::Key::Num2, false, none, false);
+        assert_eq!(app.plot_mode, PlotMode::TwoD);
+        assert!(
+            app.scene.curve.is_none(),
+            "mode only applies to the next request"
+        );
+        app.scene.request_in_mode("x^2", PlotMode::TwoD).unwrap();
+        frame(&mut app, egui::Key::T, false, none, false);
+        assert!(app.tangent_enabled);
+        frame(&mut app, egui::Key::T, true, none, false);
+        assert!(app.tangent_enabled);
+        frame(&mut app, egui::Key::Num3, false, none, true);
+        assert_eq!(
+            app.plot_mode,
+            PlotMode::TwoD,
+            "focused editor retains its keys"
+        );
     }
 
     #[test]
