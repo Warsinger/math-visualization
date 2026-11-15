@@ -187,6 +187,11 @@ impl Equation {
     pub fn references_z(source: &str) -> Result<bool, String> {
         Ok(Self::parse_impl(source, false)?.root.uses_variable(2))
     }
+    pub(crate) fn planar_shorthand(source: &str) -> bool {
+        !source.contains('=')
+            && Self::parse_impl(source, false).is_ok_and(|equation| !equation.root.uses_variable(1))
+    }
+
     pub fn planar(source: &str) -> Result<Self, String> {
         let mut equation = Self::parse_impl(source, false)?;
         if equation.root.uses_variable(2) {

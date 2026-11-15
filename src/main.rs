@@ -1141,16 +1141,16 @@ impl Playground {
                 }
             });
             ui.separator();
+            if let Some(formula) = math_playground::formula::selected(&self.scene) {
+                ui.label(formula);
+            }
             if self.scene.spatial_active() && self.scene.spatial_workspace.as_ref().unwrap().selected().object == PlotKind::Curve {
                 ui.label("XY curve in 3D: z=0. Projected overlaps do not establish geometric intersections.");
-            } else if let Some(curve)=&self.scene.curve {
-                ui.label(format!("2D Cartesian: {}",curve.source));
+            } else if self.scene.curve.is_some() {
                 ui.label("Uniform numerical samples; undefined/sharp intervals may be skipped, and discontinuities can still mislead.");
-            } else if let Some(surface) = &self.scene.surface {
-                ui.label(format!("Equation: {}", surface.source));
+            } else if self.scene.surface.is_some() {
                 ui.label("Approximate wireframe; no depth occlusion. One equation generally defines a surface, not a space curve.");
             } else {
-                ui.label("x = r cos(2πnt)    y = r sin(2πnt)    z = h(t − ½)    0 ≤ t ≤ 1");
                 ui.label("Height stays fixed when turns change. Pitch = height / turns. Units are abstract.");
             }
             if compact && self.history_open {
