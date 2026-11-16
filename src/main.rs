@@ -68,6 +68,40 @@ fn history_import_actions(
     chosen
 }
 
+/// Keep the applied values visible beside the action whenever its draft differs.
+fn sampling_apply_button<T: PartialEq>(
+    ui: &mut egui::Ui,
+    action: &str,
+    draft: T,
+    applied: T,
+    describe: impl FnOnce(T) -> String,
+) -> bool {
+    let changed = draft != applied;
+    if changed {
+        ui.label(
+            egui::RichText::new(format!(
+                "Unapplied sampling changes · plot still uses {}",
+                describe(applied)
+            ))
+            .strong(),
+        );
+    }
+    let button = if changed {
+        egui::Button::new(egui::RichText::new(action).strong())
+    } else {
+        egui::Button::new(action)
+    };
+    ui.add(button).clicked()
+}
+
+fn describe_surface_sampling(sampling: Sampling) -> String {
+    let [x, y, z] = sampling.extent;
+    format!(
+        "X ±{x}, Y ±{y}, Z ±{z}, {} cells per axis",
+        sampling.resolution
+    )
+}
+
 struct Playground {
     #[cfg(windows)]
     alt_code: windows_alt_code::AltCodeInput,
@@ -688,14 +722,24 @@ impl Playground {
         }
         if self.scene.spatial_active() {
             ui.small("Up to 8 objects / 300,000 total lines, including hidden objects. Wireframe overlaps are not intersection results.");
-            ui.collapsing("Shared 3D bounds and sampling", |ui| {
+            let workspace = self.scene.spatial_workspace.as_ref().unwrap();
+            let applied = (workspace.spatial.unwrap(), workspace.sampling.samples);
+            let draft = (self.sampling, self.curve_sampling.samples);
+            let title = if draft == applied {
+                "Shared 3D bounds and sampling"
+            } else {
+                "Shared 3D bounds and sampling (unapplied changes)"
+            };
+            egui::CollapsingHeader::new(title).id_salt("shared_3d_sampling").show(ui, |ui| {
                 for (label, extent) in ["X ±", "Y ±", "Z ±"].into_iter().zip(&mut self.sampling.extent) {
                     ui.add(egui::Slider::new(extent,0.1..=10.0).text(label));
                 }
                 ui.add(egui::Slider::new(&mut self.sampling.resolution,8..=40).text("Surface cells / axis"));
                 ui.add(egui::Slider::new(&mut self.curve_sampling.samples,64..=4096).text("XY samples"));
                 ui.small("Bounds sample surfaces and XY curves. Helices retain their own radius/height. Apply rebuilds all objects using applied equations.");
-                if ui.button("Apply 3D sampling").clicked() {
+                if sampling_apply_button(ui, "Apply 3D sampling", (self.sampling, self.curve_sampling.samples), applied, |(sampling, samples)| {
+                    format!("{}, {samples} XY samples", describe_surface_sampling(sampling))
+                }) {
                     let settings = self.sampling;
                     let samples = self.curve_sampling.samples;
                     self.pending_history_request = Some("Apply shared 3D sampling".into());
@@ -998,14 +1042,19 @@ impl Playground {
                             ui.label("This curve lies on the XY plane at z=0. Edit its equation in the top input. Tangent/area exploration is available in the separate 2D workspace.");
                         } else if let Some(curve)=&self.scene.curve {
                             let source=curve.source.clone();
-                            let applied_extent=f64::from(curve.sampling.extent[0]);
+                            let applied = curve.sampling;
+                            let applied_extent=f64::from(applied.extent[0]);
                             ui.heading("Selected · 2D curve");
                             for (axis,extent) in ["X ±","Y ±"].into_iter().zip(&mut self.curve_sampling.extent) {
                                 ui.add(egui::Slider::new(extent,0.1..=20.0).text(axis));
                             }
                             ui.add(egui::Slider::new(&mut self.curve_sampling.samples,64..=4096).text("Samples"));
-                            ui.label(format!("Apply sampling to rebuild. Explicit functions use sample intervals; implicit curves use a {}×{} grid.",math_playground::curve::grid_cells(self.curve_sampling),math_playground::curve::grid_cells(self.curve_sampling)));
-                            if ui.button("Apply sampling").clicked() {
+                            let grid = math_playground::curve::grid_cells(self.curve_sampling);
+                            ui.small(format!("Draft sampling uses intervals for explicit functions or a {grid}×{grid} grid for implicit curves."));
+                            if sampling_apply_button(ui, "Apply sampling", self.curve_sampling, applied, |sampling| {
+                                let [x, y] = sampling.extent;
+                                format!("X ±{x}, Y ±{y}, {} samples", sampling.samples)
+                            }) {
                                 let settings=self.curve_sampling;
                                 self.pending_history_request=Some(format!("plot {source}"));
                                 let source = source.clone();
@@ -1048,8 +1097,8 @@ impl Playground {
                                 ui.add(egui::Slider::new(extent, 0.1..=10.0).text(format!("{axis} ±")));
                             }
                             ui.add(egui::Slider::new(&mut self.sampling.resolution, 8..=40).text("Cells / axis"));
-                            ui.label("Domain is symmetric about zero. Click values to type. Apply sampling to rebuild.");
-                            if ui.button("Apply sampling").clicked() {
+                            ui.small("Domain is symmetric about zero. Click values to type.");
+                            if sampling_apply_button(ui, "Apply sampling", self.sampling, applied_sampling, describe_surface_sampling) {
                                 let sampling = self.sampling;
                                 self.pending_history_request=Some(format!("plot {source}"));
                                 self.start(move |scene| scene.plot(&source, sampling));
@@ -2210,6 +2259,51 @@ mod tests {
         let error = run(true).unwrap_err().to_string();
         assert!(error.contains("Simulated startup failure"));
         assert!(error.contains("--simulate-startup-error"));
+    }
+
+    #[test]
+    fn sampling_notice_tracks_the_applied_plot() {
+        let mut app = Playground::default();
+        app.scene.request_in_mode("x^2", PlotMode::TwoD).unwrap();
+        let applied = app.scene.curve.as_ref().unwrap().sampling;
+        app.curve_sampling = applied;
+        let ctx = egui::Context::default();
+        let notices = |app: &mut Playground| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1150.0, 760.0),
+                )),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                app.draw(ui);
+            });
+            output.textures_delta.clear();
+            output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text)
+                        if text.galley.job.text.contains("Unapplied sampling changes") =>
+                    {
+                        Some(text.galley.job.text.clone())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(notices(&mut app).is_empty());
+        app.curve_sampling.samples = applied.samples + 1;
+        let pending = notices(&mut app);
+        assert!(
+            pending
+                .iter()
+                .any(|text| text.contains(&format!("{} samples", applied.samples)))
+        );
+        assert_eq!(app.scene.curve.as_ref().unwrap().sampling, applied);
+        app.curve_sampling = applied;
+        assert!(notices(&mut app).is_empty());
     }
 
     #[test]
