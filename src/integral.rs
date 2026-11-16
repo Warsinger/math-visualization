@@ -150,3 +150,115 @@ mod tests {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Rule {
+    Left,
+    #[default]
+    Midpoint,
+    Right,
+}
+
+pub struct RiemannSum {
+    pub signed: f64,
+    /// Rectangles in ascending display coordinates: left x, right x, height.
+    pub rectangles: Vec<[f64; 3]>,
+}
+
+pub fn riemann(
+    source: &str,
+    [a, b]: [f64; 2],
+    count: usize,
+    rule: Rule,
+) -> Result<RiemannSum, String> {
+    if !a.is_finite() || !b.is_finite() || a.abs().max(b.abs()) > 1e6 || !(1..=128).contains(&count)
+    {
+        return Err("Use finite bounds within ±1,000,000 and 1–128 rectangles.".into());
+    }
+    let equation = Equation::explicit_y(source)?;
+    let dx = (b - a) / count as f64;
+    let offset = match rule {
+        Rule::Left => 0.0,
+        Rule::Midpoint => 0.5,
+        Rule::Right => 1.0,
+    };
+    let mut rectangles = Vec::with_capacity(count);
+    let mut signed = 0.0;
+    for index in 0..count {
+        let start = a + index as f64 * dx;
+        let end = if index + 1 == count {
+            b
+        } else {
+            a + (index + 1) as f64 * dx
+        };
+        let x = start + (end - start) * offset;
+        let height = equation
+            .evaluate([x, 0.0, 0.0])
+            .ok_or("Function is undefined or nonfinite at a rectangle's sample point.")?;
+        if a != b {
+            rectangles.push([start.min(end), start.max(end), height]);
+        }
+        signed += (end - start) * height;
+    }
+    if !signed.is_finite() {
+        return Err("Riemann sum overflowed.".into());
+    }
+    Ok(RiemannSum { signed, rectangles })
+}
+
+type RiemannKey = (String, [u64; 2], usize, Rule);
+
+#[derive(Default)]
+pub struct RiemannCache {
+    key: Option<RiemannKey>,
+    result: Option<Result<RiemannSum, String>>,
+}
+
+impl RiemannCache {
+    pub fn get(
+        &mut self,
+        source: &str,
+        bounds: [f64; 2],
+        count: usize,
+        rule: Rule,
+    ) -> &Result<RiemannSum, String> {
+        let key = (source.to_owned(), bounds.map(f64::to_bits), count, rule);
+        if self.key.as_ref() != Some(&key) {
+            self.result = Some(riemann(source, bounds, count, rule));
+            self.key = Some(key);
+        }
+        self.result.as_ref().unwrap()
+    }
+}
+
+#[cfg(test)]
+mod riemann_tests {
+    use super::*;
+
+    #[test]
+    fn rules_match_known_squares_and_reverse_orientation() {
+        for (rule, expected, reversed) in [
+            (Rule::Left, 0.125, -0.625),
+            (Rule::Midpoint, 0.3125, -0.3125),
+            (Rule::Right, 0.625, -0.125),
+        ] {
+            let forward = riemann("x^2", [0.0, 1.0], 2, rule).unwrap();
+            assert_eq!(forward.signed, expected);
+            assert_eq!(forward.rectangles[0][..2], [0.0, 0.5]);
+            assert_eq!(forward.rectangles[1][..2], [0.5, 1.0]);
+            assert_eq!(
+                riemann("x^2", [1.0, 0.0], 2, rule).unwrap().signed,
+                reversed
+            );
+        }
+        assert!(riemann("1/x", [-1.0, 1.0], 1, Rule::Midpoint).is_err());
+        assert!(riemann("x", [0.0, 1.0], 129, Rule::Midpoint).is_err());
+        assert!(riemann("x", [0.0, f64::INFINITY], 1, Rule::Midpoint).is_err());
+        assert!(
+            riemann("x", [1.0, 1.0], 1, Rule::Midpoint)
+                .unwrap()
+                .rectangles
+                .is_empty()
+        );
+    }
+}

@@ -72,6 +72,7 @@ pub struct Overlays<'a> {
     pub plots: Option<&'a math_playground::workspace::Workspace>,
     pub tangent_source: Option<&'a str>,
     pub area: Option<&'a math_playground::integral::Area>,
+    pub rectangles: Option<&'a [[f64; 3]]>,
     pub slice: Option<&'a math_playground::slice::Slice>,
     pub axis_markers: bool,
     pub axis_extent: Option<[f32; 3]>,
@@ -119,6 +120,7 @@ pub fn canvas(
         plots,
         tangent_source,
         area,
+        rectangles,
         slice,
         axis_markers,
         axis_extent,
@@ -179,6 +181,29 @@ pub fn canvas(
                 let line = [a, b];
                 painter.line_segment(line.map(project), Stroke::new(0.5, Color32::from_gray(45)));
             }
+        }
+    }
+    if curve.is_some()
+        && let Some(rectangles) = rectangles
+    {
+        for &[left, right, height] in rectangles {
+            let a = project([left as f32, 0.0, 0.0]);
+            let b = project([right as f32, height as f32, 0.0]);
+            if !(a.is_finite() && b.is_finite()) {
+                continue;
+            }
+            let bounds = egui::Rect::from_two_pos(a, b);
+            painter.rect_filled(
+                bounds.intersect(rect),
+                0.0,
+                Color32::from_rgba_unmultiplied(255, 187, 91, 35),
+            );
+            painter.rect_stroke(
+                bounds,
+                0.0,
+                Stroke::new(1.0, Color32::from_rgb(255, 187, 91)),
+                egui::StrokeKind::Inside,
+            );
         }
     }
     let extents = curve

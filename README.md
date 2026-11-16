@@ -129,3 +129,10 @@ branch counters fails validation. Counts represent only
 branches LLVM instruments. They do not measure all combinations of boolean
 conditions, and compiler changes can change the denominator. Standalone tests
 and generated target paths are excluded from reports. Inline tests may count.
+
+In the 2D integral controls, enable **Show Riemann rectangles** to compare a
+signed rectangle sum with the numerical Simpson estimate. Choose 1–128
+rectangles and sample at the start (Left), middle, or end (Right) of each step
+from the first bound to the second. Reversing the bounds reverses the step
+direction, so the Left and Right methods exchange sample locations while the
+width changes sign. Both estimates can miss behavior between sample points.
