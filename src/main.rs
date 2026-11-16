@@ -68,6 +68,40 @@ fn history_import_actions(
     chosen
 }
 
+/// Keep the applied values visible beside the action whenever its draft differs.
+fn sampling_apply_button<T: PartialEq>(
+    ui: &mut egui::Ui,
+    action: &str,
+    draft: T,
+    applied: T,
+    describe: impl FnOnce(T) -> String,
+) -> bool {
+    let changed = draft != applied;
+    if changed {
+        ui.label(
+            egui::RichText::new(format!(
+                "Unapplied sampling changes · plot still uses {}",
+                describe(applied)
+            ))
+            .strong(),
+        );
+    }
+    let button = if changed {
+        egui::Button::new(egui::RichText::new(action).strong())
+    } else {
+        egui::Button::new(action)
+    };
+    ui.add(button).clicked()
+}
+
+fn describe_surface_sampling(sampling: Sampling) -> String {
+    let [x, y, z] = sampling.extent;
+    format!(
+        "X ±{x}, Y ±{y}, Z ±{z}, {} cells per axis",
+        sampling.resolution
+    )
+}
+
 struct Playground {
     #[cfg(windows)]
     alt_code: windows_alt_code::AltCodeInput,
@@ -80,6 +114,7 @@ struct Playground {
     error: bool,
     sampling: Sampling,
     pending: Option<Receiver<Result<Scene, String>>>,
+    pending_resampling: bool,
     history: Store,
     history_open: bool,
     history_width: f32,
@@ -117,6 +152,7 @@ impl Default for Playground {
             error: false,
             sampling: Sampling::default(),
             pending: None,
+            pending_resampling: false,
             history: Store::session(),
             history_open: false,
             history_width: 300.0,
@@ -235,7 +271,16 @@ impl Playground {
             self.pending_diagnostics = Some(diagnostics);
         }
     }
+    fn start_resampling(
+        &mut self,
+        work: impl FnOnce(&mut Scene) -> Result<(), String> + Send + 'static,
+    ) {
+        self.start(work);
+        self.pending_resampling = true;
+    }
+
     fn start(&mut self, work: impl FnOnce(&mut Scene) -> Result<(), String> + Send + 'static) {
+        self.pending_resampling = false;
         self.pending_import_controls = None;
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -272,7 +317,7 @@ impl Playground {
                         #[cfg(not(target_arch = "wasm32"))]
                         tracing::info!(target: "math_playground", event = "geometry_updated", segments = scene.geometry.lines.len());
                         self.scene = scene;
-                        if self.plot_mode != PlotMode::Auto {
+                        if !self.pending_resampling && self.plot_mode != PlotMode::Auto {
                             self.plot_mode = if self.scene.curve.is_some() {
                                 PlotMode::TwoD
                             } else {
@@ -379,6 +424,9 @@ impl Playground {
                 self.feedback = "Geometry worker stopped; previous scene preserved.".into();
             }
             _ => {}
+        }
+        if self.pending.is_none() {
+            self.pending_resampling = false;
         }
         #[cfg(not(target_arch = "wasm32"))]
         if self.pending.is_none() {
@@ -688,18 +736,28 @@ impl Playground {
         }
         if self.scene.spatial_active() {
             ui.small("Up to 8 objects / 300,000 total lines, including hidden objects. Wireframe overlaps are not intersection results.");
-            ui.collapsing("Shared 3D bounds and sampling", |ui| {
+            let workspace = self.scene.spatial_workspace.as_ref().unwrap();
+            let applied = (workspace.spatial.unwrap(), workspace.sampling.samples);
+            let draft = (self.sampling, self.curve_sampling.samples);
+            let title = if draft == applied {
+                "Shared 3D bounds and sampling"
+            } else {
+                "Shared 3D bounds and sampling (unapplied changes)"
+            };
+            egui::CollapsingHeader::new(title).id_salt("shared_3d_sampling").show(ui, |ui| {
                 for (label, extent) in ["X ±", "Y ±", "Z ±"].into_iter().zip(&mut self.sampling.extent) {
                     ui.add(egui::Slider::new(extent,0.1..=10.0).text(label));
                 }
                 ui.add(egui::Slider::new(&mut self.sampling.resolution,8..=40).text("Surface cells / axis"));
                 ui.add(egui::Slider::new(&mut self.curve_sampling.samples,64..=4096).text("XY samples"));
                 ui.small("Bounds sample surfaces and XY curves. Helices retain their own radius/height. Apply rebuilds all objects using applied equations.");
-                if ui.button("Apply 3D sampling").clicked() {
+                if sampling_apply_button(ui, "Apply 3D sampling", (self.sampling, self.curve_sampling.samples), applied, |(sampling, samples)| {
+                    format!("{}, {samples} XY samples", describe_surface_sampling(sampling))
+                }) {
                     let settings = self.sampling;
                     let samples = self.curve_sampling.samples;
                     self.pending_history_request = Some("Apply shared 3D sampling".into());
-                    self.start(move |scene| {
+                    self.start_resampling(move |scene| {
                         scene.spatial_workspace.as_mut().unwrap().rebuild_spatial(settings,samples)?;
                         scene.sync_spatial_workspace(); Ok(())
                     });
@@ -998,18 +1056,23 @@ impl Playground {
                             ui.label("This curve lies on the XY plane at z=0. Edit its equation in the top input. Tangent/area exploration is available in the separate 2D workspace.");
                         } else if let Some(curve)=&self.scene.curve {
                             let source=curve.source.clone();
-                            let applied_extent=f64::from(curve.sampling.extent[0]);
+                            let applied = curve.sampling;
+                            let applied_extent=f64::from(applied.extent[0]);
                             ui.heading("Selected · 2D curve");
                             for (axis,extent) in ["X ±","Y ±"].into_iter().zip(&mut self.curve_sampling.extent) {
                                 ui.add(egui::Slider::new(extent,0.1..=20.0).text(axis));
                             }
                             ui.add(egui::Slider::new(&mut self.curve_sampling.samples,64..=4096).text("Samples"));
-                            ui.label(format!("Apply sampling to rebuild. Explicit functions use sample intervals; implicit curves use a {}×{} grid.",math_playground::curve::grid_cells(self.curve_sampling),math_playground::curve::grid_cells(self.curve_sampling)));
-                            if ui.button("Apply sampling").clicked() {
+                            let grid = math_playground::curve::grid_cells(self.curve_sampling);
+                            ui.small(format!("Draft sampling uses intervals for explicit functions or a {grid}×{grid} grid for implicit curves."));
+                            if sampling_apply_button(ui, "Apply sampling", self.curve_sampling, applied, |sampling| {
+                                let [x, y] = sampling.extent;
+                                format!("X ±{x}, Y ±{y}, {} samples", sampling.samples)
+                            }) {
                                 let settings=self.curve_sampling;
                                 self.pending_history_request=Some(format!("plot {source}"));
                                 let source = source.clone();
-                                self.start(move |scene|{
+                                self.start_resampling(move |scene|{
                                     if let Some(workspace) = &mut scene.workspace { workspace.rebuild(settings)?; scene.sync_workspace(); Ok(()) }
                                     else { scene.plot_curve(&source,settings) }
                                 });
@@ -1048,11 +1111,11 @@ impl Playground {
                                 ui.add(egui::Slider::new(extent, 0.1..=10.0).text(format!("{axis} ±")));
                             }
                             ui.add(egui::Slider::new(&mut self.sampling.resolution, 8..=40).text("Cells / axis"));
-                            ui.label("Domain is symmetric about zero. Click values to type. Apply sampling to rebuild.");
-                            if ui.button("Apply sampling").clicked() {
+                            ui.small("Domain is symmetric about zero. Click values to type.");
+                            if sampling_apply_button(ui, "Apply sampling", self.sampling, applied_sampling, describe_surface_sampling) {
                                 let sampling = self.sampling;
                                 self.pending_history_request=Some(format!("plot {source}"));
-                                self.start(move |scene| scene.plot(&source, sampling));
+                                self.start_resampling(move |scene| scene.plot(&source, sampling));
                             }
                             }
                             ui.checkbox(&mut self.slice_enabled, "Explore cross-section");
@@ -2210,6 +2273,92 @@ mod tests {
         let error = run(true).unwrap_err().to_string();
         assert!(error.contains("Simulated startup failure"));
         assert!(error.contains("--simulate-startup-error"));
+    }
+
+    #[test]
+    fn resampling_keeps_the_next_request_mode_and_restore_selects_its_dimension() {
+        for (source, scene_mode, next_mode) in [
+            ("x^2", PlotMode::TwoD, PlotMode::ThreeD),
+            ("z=x^2+y^2", PlotMode::ThreeD, PlotMode::TwoD),
+            ("x^2", PlotMode::TwoD, PlotMode::Auto),
+            ("z=x^2+y^2", PlotMode::ThreeD, PlotMode::Auto),
+        ] {
+            let mut app = Playground::default();
+            app.scene.request_in_mode(source, scene_mode).unwrap();
+            let snapshot = Snapshot::capture(&app.scene);
+            app.plot_mode = next_mode;
+            app.start_resampling(|scene| {
+                if let Some(workspace) = &mut scene.workspace {
+                    let mut settings = workspace.sampling;
+                    settings.samples += 1;
+                    workspace.rebuild(settings)?;
+                    scene.sync_workspace();
+                } else if let Some(workspace) = &mut scene.spatial_workspace {
+                    let mut settings = workspace.spatial.unwrap();
+                    settings.resolution += 1;
+                    workspace.rebuild_spatial(settings, workspace.sampling.samples)?;
+                    scene.sync_spatial_workspace();
+                } else {
+                    let surface = scene.surface.as_ref().unwrap();
+                    let mut settings = surface.sampling;
+                    settings.resolution += 1;
+                    scene.plot(&surface.source.clone(), settings)?;
+                }
+                Ok(())
+            });
+            finish_startup(&mut app);
+            assert!(!app.error, "{}", app.feedback);
+            assert_eq!(app.plot_mode, next_mode);
+            app.restore_snapshot(snapshot);
+            finish_startup(&mut app);
+            assert!(!app.error, "{}", app.feedback);
+            assert_eq!(app.plot_mode, scene_mode);
+        }
+    }
+
+    #[test]
+    fn sampling_notice_tracks_the_applied_plot() {
+        let mut app = Playground::default();
+        app.scene.request_in_mode("x^2", PlotMode::TwoD).unwrap();
+        let applied = app.scene.curve.as_ref().unwrap().sampling;
+        app.curve_sampling = applied;
+        let ctx = egui::Context::default();
+        let notices = |app: &mut Playground| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1150.0, 760.0),
+                )),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                app.draw(ui);
+            });
+            output.textures_delta.clear();
+            output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text)
+                        if text.galley.job.text.contains("Unapplied sampling changes") =>
+                    {
+                        Some(text.galley.job.text.clone())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(notices(&mut app).is_empty());
+        app.curve_sampling.samples = applied.samples + 1;
+        let pending = notices(&mut app);
+        assert!(
+            pending
+                .iter()
+                .any(|text| text.contains(&format!("{} samples", applied.samples)))
+        );
+        assert_eq!(app.scene.curve.as_ref().unwrap().sampling, applied);
+        app.curve_sampling = applied;
+        assert!(notices(&mut app).is_empty());
     }
 
     #[test]
