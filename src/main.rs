@@ -114,6 +114,7 @@ struct Playground {
     error: bool,
     sampling: Sampling,
     pending: Option<Receiver<Result<Scene, String>>>,
+    pending_resampling: bool,
     history: Store,
     history_open: bool,
     history_width: f32,
@@ -151,6 +152,7 @@ impl Default for Playground {
             error: false,
             sampling: Sampling::default(),
             pending: None,
+            pending_resampling: false,
             history: Store::session(),
             history_open: false,
             history_width: 300.0,
@@ -269,7 +271,16 @@ impl Playground {
             self.pending_diagnostics = Some(diagnostics);
         }
     }
+    fn start_resampling(
+        &mut self,
+        work: impl FnOnce(&mut Scene) -> Result<(), String> + Send + 'static,
+    ) {
+        self.start(work);
+        self.pending_resampling = true;
+    }
+
     fn start(&mut self, work: impl FnOnce(&mut Scene) -> Result<(), String> + Send + 'static) {
+        self.pending_resampling = false;
         self.pending_import_controls = None;
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -306,7 +317,7 @@ impl Playground {
                         #[cfg(not(target_arch = "wasm32"))]
                         tracing::info!(target: "math_playground", event = "geometry_updated", segments = scene.geometry.lines.len());
                         self.scene = scene;
-                        if self.plot_mode != PlotMode::Auto {
+                        if !self.pending_resampling && self.plot_mode != PlotMode::Auto {
                             self.plot_mode = if self.scene.curve.is_some() {
                                 PlotMode::TwoD
                             } else {
@@ -413,6 +424,9 @@ impl Playground {
                 self.feedback = "Geometry worker stopped; previous scene preserved.".into();
             }
             _ => {}
+        }
+        if self.pending.is_none() {
+            self.pending_resampling = false;
         }
         #[cfg(not(target_arch = "wasm32"))]
         if self.pending.is_none() {
@@ -743,7 +757,7 @@ impl Playground {
                     let settings = self.sampling;
                     let samples = self.curve_sampling.samples;
                     self.pending_history_request = Some("Apply shared 3D sampling".into());
-                    self.start(move |scene| {
+                    self.start_resampling(move |scene| {
                         scene.spatial_workspace.as_mut().unwrap().rebuild_spatial(settings,samples)?;
                         scene.sync_spatial_workspace(); Ok(())
                     });
@@ -1058,7 +1072,7 @@ impl Playground {
                                 let settings=self.curve_sampling;
                                 self.pending_history_request=Some(format!("plot {source}"));
                                 let source = source.clone();
-                                self.start(move |scene|{
+                                self.start_resampling(move |scene|{
                                     if let Some(workspace) = &mut scene.workspace { workspace.rebuild(settings)?; scene.sync_workspace(); Ok(()) }
                                     else { scene.plot_curve(&source,settings) }
                                 });
@@ -1101,7 +1115,7 @@ impl Playground {
                             if sampling_apply_button(ui, "Apply sampling", self.sampling, applied_sampling, describe_surface_sampling) {
                                 let sampling = self.sampling;
                                 self.pending_history_request=Some(format!("plot {source}"));
-                                self.start(move |scene| scene.plot(&source, sampling));
+                                self.start_resampling(move |scene| scene.plot(&source, sampling));
                             }
                             }
                             ui.checkbox(&mut self.slice_enabled, "Explore cross-section");
@@ -2259,6 +2273,47 @@ mod tests {
         let error = run(true).unwrap_err().to_string();
         assert!(error.contains("Simulated startup failure"));
         assert!(error.contains("--simulate-startup-error"));
+    }
+
+    #[test]
+    fn resampling_keeps_the_next_request_mode_and_restore_selects_its_dimension() {
+        for (source, scene_mode, next_mode) in [
+            ("x^2", PlotMode::TwoD, PlotMode::ThreeD),
+            ("z=x^2+y^2", PlotMode::ThreeD, PlotMode::TwoD),
+            ("x^2", PlotMode::TwoD, PlotMode::Auto),
+            ("z=x^2+y^2", PlotMode::ThreeD, PlotMode::Auto),
+        ] {
+            let mut app = Playground::default();
+            app.scene.request_in_mode(source, scene_mode).unwrap();
+            let snapshot = Snapshot::capture(&app.scene);
+            app.plot_mode = next_mode;
+            app.start_resampling(|scene| {
+                if let Some(workspace) = &mut scene.workspace {
+                    let mut settings = workspace.sampling;
+                    settings.samples += 1;
+                    workspace.rebuild(settings)?;
+                    scene.sync_workspace();
+                } else if let Some(workspace) = &mut scene.spatial_workspace {
+                    let mut settings = workspace.spatial.unwrap();
+                    settings.resolution += 1;
+                    workspace.rebuild_spatial(settings, workspace.sampling.samples)?;
+                    scene.sync_spatial_workspace();
+                } else {
+                    let surface = scene.surface.as_ref().unwrap();
+                    let mut settings = surface.sampling;
+                    settings.resolution += 1;
+                    scene.plot(&surface.source.clone(), settings)?;
+                }
+                Ok(())
+            });
+            finish_startup(&mut app);
+            assert!(!app.error, "{}", app.feedback);
+            assert_eq!(app.plot_mode, next_mode);
+            app.restore_snapshot(snapshot);
+            finish_startup(&mut app);
+            assert!(!app.error, "{}", app.feedback);
+            assert_eq!(app.plot_mode, scene_mode);
+        }
     }
 
     #[test]
