@@ -83,6 +83,17 @@ jobs:
         run: ./scripts/build-web.ps1
       - name: Verify JS/Wasm pairing and hosting files
         run: node scripts/verify-web.mjs
+      - name: Install smoke-test browsers
+        run: npx playwright install --with-deps chromium firefox
+      - name: Exercise the packaged Wasm app in Chromium and Firefox
+        run: xvfb-run -a npx playwright test
+      - uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: browser-smoke-diagnostics
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Test deployment lifecycle policies
         run: node --test scripts/*.test.mjs
       - uses: actions/upload-artifact@v6
