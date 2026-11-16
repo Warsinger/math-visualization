@@ -114,3 +114,18 @@ Equation checkpoint validation: formatting check, strict Clippy, all **20 tests*
 Function extension validation: formatting check, strict Clippy, all **24 tests**, and the Windows build passed on October 14, 2026. The new tests cover function syntax/evaluation, domains, nested-call resource limits, and plotting integration. No dependencies were added. Interactive visual review of the function examples remains pending.
 
 Browser builds require Node 24+ and `npm ci --ignore-scripts` before `pwsh -File scripts/build-web.ps1`. The exact locked [web-shared](https://github.com/Warsinger/web-shared) package supplies canvas/footer styling and startup status handling; Rust keeps its loader, egui controls and browser-local history.
+
+### Nightly branch coverage
+
+The separate Branch coverage workflow runs on main pushes and manual dispatch.
+It uses Linux x64/debug with nightly-2026-11-10, its llvm-tools-preview component,
+and cargo-llvm-cov 0.9.1. Update those pins together and compare the JSON and HTML
+from a trial run before changing the default. The instrumented build directory
+is separate from stable coverage, and this workflow uses no shared coverage cache.
+
+Download branch-coverage-linux-debug for the annotated HTML, raw LLVM JSON and
+Markdown summary with the producing commit and toolchain. A report without parser
+branch counters fails validation. Counts represent only
+branches LLVM instruments. They do not measure all combinations of boolean
+conditions, and compiler changes can change the denominator. Standalone tests
+and generated target paths are excluded from reports. Inline tests may count.

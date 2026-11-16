@@ -1,0 +1,66 @@
+name: Nightly Rust branch coverage
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: branch-coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  branch-coverage:
+    name: Branch coverage (Linux debug)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      NIGHTLY: nightly-2026-11-10
+      COV_VERSION: '0.9.1'
+      CARGO_LLVM_COV_TARGET_DIR: target/nightly-branch-coverage
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install Linux build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libx11-dev libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libgl1-mesa-dev
+      - name: Install pinned coverage tools
+        run: |
+          rustup toolchain install "$NIGHTLY" --profile minimal --component llvm-tools-preview
+          cargo +stable install cargo-llvm-cov --version "$COV_VERSION" --locked --root "$RUNNER_TEMP/branch-coverage-tools"
+          echo "$RUNNER_TEMP/branch-coverage-tools/bin" >> "$GITHUB_PATH"
+      - name: Run branch-instrumented tests once
+        run: cargo +"$NIGHTLY" llvm-cov --branch --locked --all-targets --target x86_64-unknown-linux-gnu --no-report
+      - name: Export and validate branch reports
+        run: |
+          report=dist/branch-coverage
+          mkdir -p "$report"
+          options=(--target x86_64-unknown-linux-gnu --ignore-filename-regex '(^|/)(tests|target)/')
+          cargo +"$NIGHTLY" llvm-cov report "${options[@]}" --json --output-path "$report/coverage.json"
+          LLVM_COV_FLAGS=-show-branches=count cargo +"$NIGHTLY" llvm-cov report "${options[@]}" --html --output-dir "$report"
+          test -s "$report/html/index.html"
+          {
+            echo '# Rust branch coverage'
+            echo
+            echo "Commit: $GITHUB_SHA"
+            echo "Platform/profile: x86_64-unknown-linux-gnu, debug"
+            rustc +"$NIGHTLY" --version
+            cargo +"$NIGHTLY" llvm-cov --version
+            echo 'Excludes standalone tests/ and target/ paths. Inline unit-test code may count.'
+            echo
+            python3 scripts/branch-coverage-summary.py "$report/coverage.json"
+          } | tee "$report/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: branch-coverage-linux-debug
+          path: dist/branch-coverage/
+          if-no-files-found: error
+          retention-days: 14
