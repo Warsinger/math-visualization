@@ -96,6 +96,10 @@ struct Playground {
     area_enabled: bool,
     area_bounds: [f64; 2],
     area_cache: math_playground::integral::Cache,
+    riemann_enabled: bool,
+    riemann_count: usize,
+    riemann_rule: math_playground::integral::Rule,
+    riemann_cache: math_playground::integral::RiemannCache,
 
     slice_enabled: bool,
     slice_axis: usize,
@@ -133,6 +137,10 @@ impl Default for Playground {
             area_enabled: false,
             area_bounds: [-1.0, 1.0],
             area_cache: Default::default(),
+            riemann_enabled: false,
+            riemann_count: 8,
+            riemann_rule: Default::default(),
+            riemann_cache: Default::default(),
 
             slice_enabled: false,
             slice_axis: 2,
@@ -1036,6 +1044,20 @@ impl Playground {
                                         }
                                         Err(error) => {ui.label(error);}
                                     }
+                                    ui.checkbox(&mut self.riemann_enabled, "Show Riemann rectangles");
+                                    if self.riemann_enabled {
+                                        use math_playground::integral::Rule;
+                                        ui.add(egui::Slider::new(&mut self.riemann_count, 1..=128).text("Rectangles"));
+                                        ui.horizontal_wrapped(|ui| {
+                                            for (rule, label) in [(Rule::Left, "Left"), (Rule::Midpoint, "Midpoint"), (Rule::Right, "Right")] {
+                                                ui.selectable_value(&mut self.riemann_rule, rule, label);
+                                            }
+                                        });
+                                        match self.riemann_cache.get(current_source, self.area_bounds, self.riemann_count, self.riemann_rule) {
+                                            Ok(sum) => { ui.label(format!("Signed Riemann sum ≈ {:.6}", sum.signed)); }
+                                            Err(error) => { ui.label(error); }
+                                        }
+                                    }
                                     ui.small("Numerical Simpson estimate; no continuity proof. Green above / red below x-axis. Reversing bounds negates integral, not total area.");
                                 } else {ui.label("Integration requires explicit y=f(x).");}
                             }
@@ -1117,11 +1139,16 @@ impl Playground {
                 let area=if self.area_enabled && selected_visible {
                     self.scene.curve.as_ref().and_then(|curve|self.area_cache.get(&curve.source,self.area_bounds[0],self.area_bounds[1]).as_ref().ok())
                 } else {None};
+                let rectangles = if self.area_enabled && self.riemann_enabled && selected_visible {
+                    self.scene.curve.as_ref().and_then(|curve| self.riemann_cache
+                        .get(&curve.source, self.area_bounds, self.riemann_count, self.riemann_rule)
+                        .as_ref().ok()).map(|sum| sum.rectangles.as_slice())
+                } else { None };
                 let slice = if self.slice_enabled && selected_visible {
                     self.scene.surface.as_ref().and_then(|surface| self.slice_cache.get(&surface.source, surface.sampling, self.slice_axis, self.slice_position).as_ref().ok())
                 } else { None };
                 let axis_extent = if self.scene.spatial_active() { Some(self.scene.spatial_workspace.as_ref().unwrap().spatial.unwrap().extent) } else { Some(self.scene.surface.as_ref().map_or([self.scene.helix.radius,self.scene.helix.radius,self.scene.helix.height/2.0], |s|s.sampling.extent)) };
-                let output=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling), view::Overlays {plots: if self.scene.spatial_active() { self.scene.spatial_workspace.as_ref() } else { self.scene.curve.as_ref().and(self.scene.workspace.as_ref()) },tangent_source,area,slice,axis_markers:self.axis_markers,axis_extent});
+                let output=view::canvas(ui, &self.scene.geometry, &mut self.camera, canvas_height,self.scene.curve.as_ref().map(|c|c.sampling), view::Overlays {plots: if self.scene.spatial_active() { self.scene.spatial_workspace.as_ref() } else { self.scene.curve.as_ref().and(self.scene.workspace.as_ref()) },tangent_source,area,rectangles,slice,axis_markers:self.axis_markers,axis_extent});
                 canvas_rect=output.rect;
                 inspected_point=output.selected;
                 tangent=output.tangent;
