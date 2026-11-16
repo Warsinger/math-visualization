@@ -69,3 +69,23 @@ The page uses web-shared's full-height canvas layout, common footer and status/m
 The asset hash now includes the app bootstrap/CSS, shared modules/styles and generated Rust JS/Wasm together. Frontend-only changes get fresh immutable URLs. prepare-web tests cover that behavior and reject overlarge assets before replacing a valid output. verify-web checks the generated artifact and all paired assets; Pages lifecycle guards and the native app remain unchanged.
 
 Manual History Restore records its outcome as a new history entry after rebuilding, so a successfully restored older plot becomes the initial plot on the next startup/reload. Automatic startup restoration does not add entries or write history. Failed restores retain the active plot and do not replace the latest successful startup choice.
+
+## Automated desktop browser smoke checks
+
+Linux CI launches the packaged WebAssembly app in the Playwright-pinned Chromium
+and Firefox builds. The smoke checks wait for the renderer, submit an equation
+through the canvas editor, verify its applied history entry, and exercise the
+visible recovery message for a failed Wasm download. A failed test retains its
+Playwright trace in the CI diagnostics artifact.
+
+To run these checks locally after building the web bundle, stop any server on
+port 8080 and run:
+
+```sh
+npx playwright install chromium firefox
+npx playwright test
+```
+
+CI uses Xvfb for browser rendering on Linux. The matrix covers the tested browser
+builds and paths only. Manual verification of paste, drag, scroll, resize and
+inspection, plus other operating systems and Safari, remains separate.
